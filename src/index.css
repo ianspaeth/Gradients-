@@ -1,0 +1,56 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-serif: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-black text-neutral-900 antialiased overflow-hidden;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply backdrop-blur-2xl bg-white/70 border border-white/20;
+  }
+  .glass-dark {
+    @apply backdrop-blur-2xl bg-black/40 border border-white/10;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Touch-friendly range inputs */
+  .range-lg {
+    @apply appearance-none bg-transparent cursor-pointer;
+  }
+  .range-lg::-webkit-slider-runnable-track {
+    @apply h-3 bg-black/10 rounded-full;
+  }
+  .range-lg::-webkit-slider-thumb {
+    @apply appearance-none w-8 h-8 rounded-full -mt-2.5 shadow-lg border-2 border-white active:scale-110 transition-transform;
+    background-color: var(--range-thumb-color, black);
+  }
+  .range-lg::-moz-range-track {
+    @apply h-3 bg-black/10 rounded-full;
+  }
+  .range-lg::-moz-range-thumb {
+    @apply w-8 h-8 rounded-full border-2 border-white shadow-lg active:scale-110 transition-transform;
+    background-color: var(--range-thumb-color, black);
+  }
+}
+
+.gradient-mesh {
+  background-color: #000;
+  background-image: radial-gradient(rgba(255,255,255,0.1) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
