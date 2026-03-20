@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, RotateCcw, Layers, Circle, Sparkles, Settings2, Image as ImageIcon, X, Download, Trash2, Bookmark, BookmarkCheck, History, Undo2, Redo2, Compass } from 'lucide-react';
+import { Plus, RotateCcw, Layers, Circle, Sparkles, Settings2, Image as ImageIcon, X, Download, Trash2, Bookmark, BookmarkCheck, History, Undo2, Redo2, Compass, ArrowLeftRight } from 'lucide-react';
 import { GradientPreview, GradientPreviewHandle } from './components/GradientPreview';
 import { MiniGradient } from './components/MiniGradient';
 import { useGradientDataUrl } from './hooks/useGradientDataUrl';
@@ -705,7 +705,10 @@ export default function App() {
               <div /> {/* Spacer to keep buttons at ends */}
 
               <button 
-                onClick={() => setSelectedNode(null)}
+                onClick={() => {
+                  if (activeNodeData) addToColorHistory(activeNodeData.color);
+                  setSelectedNode(null);
+                }}
                 className="p-2.5 bg-black/60 rounded-full text-white hover:scale-110 transition-transform pointer-events-auto shadow-xl"
                 title="Close"
               >
@@ -1034,7 +1037,7 @@ export default function App() {
                       </button>
                     ))}
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="relative grid grid-cols-2 gap-4">
                     <div className="p-5 bg-white/50 rounded-[32px] border border-neutral-200">
                       <span className="text-[10px] font-black text-neutral-400 uppercase block mb-1">Width Ratio</span>
                       <input
@@ -1047,6 +1050,26 @@ export default function App() {
                         className="w-full bg-transparent text-xl font-black outline-none"
                       />
                     </div>
+                    
+                    {/* Swap Button */}
+                    <button 
+                      onClick={() => {
+                        const next = { 
+                          ...settings, 
+                          ratio: { 
+                            width: settings.ratio.height, 
+                            height: settings.ratio.width 
+                          } 
+                        };
+                        setSettings(next);
+                        pushToHistory(next);
+                      }}
+                      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 p-2 bg-black text-white rounded-full shadow-lg hover:scale-110 active:scale-95 transition-all"
+                      title="Swap Ratio"
+                    >
+                      <ArrowLeftRight size={14} />
+                    </button>
+
                     <div className="p-5 bg-white/50 rounded-[32px] border border-neutral-200">
                       <span className="text-[10px] font-black text-neutral-400 uppercase block mb-1">Height Ratio</span>
                       <input
@@ -1146,9 +1169,13 @@ export default function App() {
                     <div className="relative w-full aspect-square flex items-center justify-center bg-neutral-100 rounded-[32px] overflow-hidden p-4 border border-neutral-200 shadow-inner">
                       <button
                         onClick={() => loadSavedGradient(saved.settings)}
-                        className="relative shadow-2xl transition-all hover:scale-105 active:scale-95 overflow-hidden rounded-xl border border-white/20 w-full h-full flex items-center justify-center"
+                        className="relative shadow-2xl transition-all hover:scale-105 active:scale-95 overflow-hidden rounded-xl border border-white/20 flex items-center justify-center"
                         style={{ 
                           aspectRatio: `${saved.settings.ratio?.width || 1} / ${saved.settings.ratio?.height || 1}`,
+                          maxWidth: '100%',
+                          maxHeight: '100%',
+                          width: (saved.settings.ratio?.width || 1) >= (saved.settings.ratio?.height || 1) ? '100%' : 'auto',
+                          height: (saved.settings.ratio?.height || 1) > (saved.settings.ratio?.width || 1) ? '100%' : 'auto',
                         }}
                       >
                         <MiniGradient 
@@ -1160,7 +1187,7 @@ export default function App() {
                       </button>
                       <button 
                         onClick={(e) => { e.stopPropagation(); deleteSavedGradient(saved.id); }}
-                        className="absolute top-4 right-4 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg z-10"
+                        className="absolute top-4 right-4 p-2 bg-red-500 text-white rounded-full opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shadow-lg z-10"
                       >
                         <X size={14} />
                       </button>
@@ -1251,9 +1278,9 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-            className="bg-white/70 backdrop-blur-xl rounded-[40px] p-10 w-full max-w-[400px] shadow-2xl border border-white/40"
+            className="bg-white/70 backdrop-blur-xl rounded-[40px] p-8 w-full max-w-[400px] shadow-2xl border border-white/40"
             >
-              <div className="flex justify-between items-center mb-8">
+              <div className="flex justify-between items-center mb-6">
                 <div>
                   <h2 className="text-sm font-mono font-black text-neutral-900 tracking-[0.5em] uppercase">Export</h2>
                 </div>
@@ -1265,15 +1292,15 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="space-y-8">
-                <div className="flex items-center justify-start mb-4 px-1">
+              <div className="space-y-5">
+                <div className="flex items-center justify-start mb-2 px-1">
                   <div className="flex items-center gap-2 bg-neutral-100 px-3 py-1 rounded-full border border-neutral-200">
                     <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Ratio</span>
                     <span className="text-[10px] font-black text-neutral-900">{settings.ratio.width}:{settings.ratio.height}</span>
                   </div>
                 </div>
 
-                <div className="relative aspect-square glass rounded-[40px] border border-white/20 overflow-hidden flex items-center justify-center p-6 sm:p-10">
+                <div className="relative aspect-square glass rounded-[40px] border border-white/20 overflow-hidden flex items-center justify-center p-4 sm:p-6">
                   <div 
                     className="shadow-2xl"
                     style={{ 
@@ -1289,7 +1316,27 @@ export default function App() {
                 </div>
 
                 <div className="space-y-4">
-                  <div className="p-5 glass rounded-[32px] border border-white/20">
+                  <div className="p-4 glass rounded-[32px] border border-white/20">
+                    <div className="flex justify-between text-[10px] font-black text-neutral-400 uppercase tracking-widest mb-2">
+                      <span>Texture Noise</span>
+                      <span className="text-black">{settings.noise}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={settings.noise}
+                      onChange={(e) => {
+                        const next = { ...settings, noise: parseInt(e.target.value) };
+                        setSettings(next);
+                      }}
+                      onMouseUp={() => pushToHistory(settings)}
+                      className="w-full h-2 bg-neutral-200 rounded-full appearance-none cursor-pointer"
+                      style={{ accentColor: '#000' }}
+                    />
+                  </div>
+
+                  <div className="p-4 glass rounded-[32px] border border-white/20">
                     <span className="text-[10px] font-black text-neutral-400 uppercase block mb-1">Export DPI</span>
                     <input
                       type="number" 
@@ -1302,7 +1349,7 @@ export default function App() {
 
                 <button
                   onClick={() => executeExport(confirmDpi)}
-                  className="w-full py-5 text-white rounded-[32px] font-black uppercase tracking-[0.2em] text-sm shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
+                  className="w-full py-4 text-white rounded-[32px] font-black uppercase tracking-[0.2em] text-sm shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
                   style={{
                     backgroundImage: `url(${currentGradientDataUrl})`,
                     backgroundSize: 'cover',
@@ -1310,7 +1357,7 @@ export default function App() {
                     textShadow: '0 2px 4px rgba(0,0,0,0.3)'
                   }}
                 >
-                  <Download size={20} />
+                  <Download size={20} style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }} />
                   Generate & Save
                 </button>
               </div>

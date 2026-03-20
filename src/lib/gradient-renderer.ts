@@ -146,38 +146,14 @@ export const drawGradientToCanvas = (
     try {
       const noiseImageData = ctx.getImageData(0, 0, w, h);
       const data = noiseImageData.data;
-      const intensity = settings.noise * 0.005; 
+      const intensity = settings.noise * 0.003; 
       
-      // Calculate grain size based on resolution to keep it consistent
-      // Reference width is 200px (matching the preview resolution)
-      const grainSize = Math.max(1, Math.floor(w / 200));
-      
-      if (grainSize <= 1) {
-        for (let i = 0; i < data.length; i += 4) {
-          const base = (Math.random() - 0.5) * intensity;
-          const additive = base * 8;
-          data[i] = Math.max(0, Math.min(255, data[i] * (1 + base) + additive));
-          data[i + 1] = Math.max(0, Math.min(255, data[i + 1] * (1 + base) + additive));
-          data[i + 2] = Math.max(0, Math.min(255, data[i + 2] * (1 + base) + additive));
-        }
-      } else {
-        for (let y = 0; y < h; y += grainSize) {
-          for (let x = 0; x < w; x += grainSize) {
-            const base = (Math.random() - 0.5) * intensity;
-            const additive = base * 8;
-            
-            for (let gy = 0; gy < grainSize && y + gy < h; gy++) {
-              if (y + gy >= h) break;
-              for (let gx = 0; gx < grainSize && x + gx < w; gx++) {
-                if (x + gx >= w) break;
-                const i = ((y + gy) * w + (x + gx)) * 4;
-                data[i] = Math.max(0, Math.min(255, data[i] * (1 + base) + additive));
-                data[i + 1] = Math.max(0, Math.min(255, data[i + 1] * (1 + base) + additive));
-                data[i + 2] = Math.max(0, Math.min(255, data[i + 2] * (1 + base) + additive));
-              }
-            }
-          }
-        }
+      for (let i = 0; i < data.length; i += 4) {
+        const base = (Math.random() - 0.5) * intensity;
+        const additive = base * 8;
+        data[i] = Math.max(0, Math.min(255, data[i] * (1 + base) + additive));
+        data[i + 1] = Math.max(0, Math.min(255, data[i + 1] * (1 + base) + additive));
+        data[i + 2] = Math.max(0, Math.min(255, data[i + 2] * (1 + base) + additive));
       }
       ctx.putImageData(noiseImageData, 0, 0);
     } catch (e) {
