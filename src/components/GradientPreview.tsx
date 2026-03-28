@@ -1,12 +1,12 @@
 import React, { useRef, useEffect, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
-import { MousePointer2, Plus, Trash2 } from 'lucide-react';
 import { GradientSettings, MeshPoint, ColorStop } from '../types';
 import { cn } from '../lib/utils';
-import { drawGradientToCanvas } from '../lib/gradient-renderer';
+import { drawGradientToCanvas, generateVectorSvg, parseColor } from '../lib/gradient-renderer';
 
 export interface GradientPreviewHandle {
   getExportDataUrl: (dpi: number) => string;
   getExportBlob: (dpi: number) => Promise<Blob | null>;
+  getExportSvg: (dpi: number) => string;
 }
 
 interface GradientPreviewProps {
@@ -26,27 +26,6 @@ interface GradientPreviewProps {
   className?: string;
 }
 
-const parseColor = (color: string) => {
-  // Handle hex
-  if (color.startsWith('#')) {
-    const r = parseInt(color.slice(1, 3), 16);
-    const g = parseInt(color.slice(3, 5), 16);
-    const b = parseInt(color.slice(5, 7), 16);
-    return { r, g, b };
-  }
-  // Handle hsl/rgb via browser parsing (fallback)
-  const temp = document.createElement('div');
-  temp.style.color = color;
-  document.body.appendChild(temp);
-  const style = window.getComputedStyle(temp).color;
-  document.body.removeChild(temp);
-  const match = style.match(/\d+/g);
-  if (match) {
-    return { r: parseInt(match[0]), g: parseInt(match[1]), b: parseInt(match[2]) };
-  }
-  return { r: 0, g: 0, b: 0 };
-};
-
 export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreviewProps>(({ 
   settings, 
   onUpdateMeshPoint, 
@@ -65,15 +44,36 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [draggingNode, setDraggingNode] = useState<{ 
     id: string; 
     type: 'mesh' | 'stop' | 'control' | 'midpoint'; 
     hasMoved: boolean;
     startX: number;
     startY: number;
+    offsetX: number;
+    offsetY: number;
   } | null>(null);
   const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [lastPointerPos, setLastPointerPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Use ResizeObserver to track the available space in the container
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerSize({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height
+        });
+      }
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   const drawGradient = (ctx: CanvasRenderingContext2D, width: number, height: number, isExport = false) => {
     drawGradientToCanvas(ctx, width, height, settings, isExport, hideNodes);
@@ -116,6 +116,34 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
           resolve(null);
         }
       });
+    },
+    getExportSvg: (dpi: number) => {
+      const baseSizeInches = 4;
+      const maxRatio = Math.max(settings.ratio.width, settings.ratio.height);
+      const scale = baseSizeInches / maxRatio;
+      
+      const width = settings.ratio.width * scale * dpi;
+      const height = settings.ratio.height * scale * dpi;
+
+      // Try to generate a true vector SVG first
+      const vectorSvg = generateVectorSvg(width, height, settings, dpi);
+      if (vectorSvg) return vectorSvg;
+      
+      // Fallback to high-res raster embedding if vectorization is not possible (e.g. noise is present)
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      
+      drawGradient(ctx, width, height, true);
+      const dataUrl = canvas.toDataURL('image/png');
+      
+      return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <image width="${width}" height="${height}" xlink:href="${dataUrl}" />
+</svg>`;
     }
   }));
 
@@ -125,21 +153,29 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.parentElement?.getBoundingClientRect();
+    const rect = canvas.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return;
     
-    const displayWidth = rect.width;
-    const displayHeight = rect.height;
+    // Use rounded values to avoid subpixel issues on mobile
+    const displayWidth = Math.round(rect.width);
+    const displayHeight = Math.round(rect.height);
 
-    canvas.width = displayWidth * dpr;
-    canvas.height = displayHeight * dpr;
-    canvas.style.width = `${displayWidth}px`;
-    canvas.style.height = `${displayHeight}px`;
+    // Only update if dimensions actually changed to avoid thrashing
+    const dpr = window.devicePixelRatio || 1;
+    const targetWidth = displayWidth * dpr;
+    const targetHeight = displayHeight * dpr;
+
+    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+    }
     
+    // Reset transform before scaling
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(dpr, dpr);
+    
     drawGradient(ctx, displayWidth, displayHeight);
-  }, [settings, draggingNode, hideNodes]);
+  }, [settings, draggingNode, hideNodes, containerSize]);
 
   useEffect(() => {
     updateCanvas();
@@ -216,7 +252,35 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
     }
 
     if (closestNode) {
-      setDraggingNode({ ...closestNode, hasMoved: false, startX: x, startY: y });
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (closestNode.type === 'mesh') {
+        const p = settings.meshPoints.find(p => p.id === closestNode!.id);
+        if (p) { offsetX = x - p.x; offsetY = y - p.y; }
+      } else if (closestNode.type === 'stop') {
+        const s = settings.stops.find(s => s.id === closestNode!.id);
+        if (s) { offsetX = x - s.x; offsetY = y - s.y; }
+      } else if (closestNode.type === 'control') {
+        const cp = settings.controlPoints || { start: { x: 20, y: 20 }, end: { x: 80, y: 80 } };
+        const p = closestNode.id === 'start' ? cp.start : cp.end;
+        offsetX = x - p.x; offsetY = y - p.y;
+      } else if (closestNode.type === 'midpoint') {
+        const s1 = settings.stops.find(s => s.id === closestNode!.id);
+        if (s1) {
+          const sortedStops = [...settings.stops].sort((a, b) => a.position - b.position);
+          const idx = sortedStops.findIndex(s => s.id === s1.id);
+          const s2 = sortedStops[idx + 1];
+          if (s2) {
+            const m = s1.midpoint ?? 50;
+            const mx = s1.x + (s2.x - s1.x) * (m / 100);
+            const my = s1.y + (s2.y - s1.y) * (m / 100);
+            offsetX = x - mx; offsetY = y - my;
+          }
+        }
+      }
+
+      setDraggingNode({ ...closestNode, hasMoved: false, startX: x, startY: y, offsetX, offsetY });
       canvas.setPointerCapture(e.pointerId);
     } else {
       setLastPointerPos({ x, y });
@@ -250,23 +314,26 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-    const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+    const x = Math.max(-20, Math.min(120, ((e.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(-20, Math.min(120, ((e.clientY - rect.top) / rect.height) * 100));
 
     // Threshold for movement (2% of canvas size)
     if (!draggingNode.hasMoved) {
       const dist = Math.sqrt(Math.pow(x - draggingNode.startX, 2) + Math.pow(y - draggingNode.startY, 2));
-      if (dist > 2) {
+      if (dist > 1.5) {
         setDraggingNode(prev => prev ? { ...prev, hasMoved: true } : null);
         onSelectNode?.(null, 'mesh'); // Close pop-up on drag start
       }
       return; // Don't move until threshold is met
     }
 
+    const targetX = Math.max(0, Math.min(100, x - draggingNode.offsetX));
+    const targetY = Math.max(0, Math.min(100, y - draggingNode.offsetY));
+
     if (draggingNode.type === 'mesh' && onUpdateMeshPoint) {
-      onUpdateMeshPoint(draggingNode.id, { x, y });
+      onUpdateMeshPoint(draggingNode.id, { x: targetX, y: targetY });
     } else if (draggingNode.type === 'control' && onUpdateControlPoint) {
-      onUpdateControlPoint(draggingNode.id as 'start' | 'end', { x, y });
+      onUpdateControlPoint(draggingNode.id as 'start' | 'end', { x: targetX, y: targetY });
     } else if (draggingNode.type === 'midpoint' && onUpdateStopMidpoint) {
       const s1 = settings.stops.find(s => s.id === draggingNode.id);
       if (s1) {
@@ -278,7 +345,7 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
           const dy = s2.y - s1.y;
           const lenSq = dx * dx + dy * dy;
           if (lenSq > 0) {
-            const t = Math.max(0, Math.min(1, ((x - s1.x) * dx + (y - s1.y) * dy) / lenSq));
+            const t = Math.max(0, Math.min(1, ((targetX - s1.x) * dx + (targetY - s1.y) * dy) / lenSq));
             let midpointValue = t * 100;
             
             // Snap to 50% (halfway)
@@ -298,7 +365,7 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
       const lenSq = dx * dx + dy * dy;
       
       if (lenSq > 0) {
-        const t = Math.max(0, Math.min(1, ((x - cp.start.x) * dx + (y - cp.start.y) * dy) / lenSq));
+        const t = Math.max(0, Math.min(1, ((targetX - cp.start.x) * dx + (targetY - cp.start.y) * dy) / lenSq));
         const pos = t * 100;
         const nx = cp.start.x + t * dx;
         const ny = cp.start.y + t * dy;
@@ -348,13 +415,15 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
 
   const renderNode = (node: any, type: 'mesh' | 'stop' | 'control') => {
     const isSelected = selectedNode?.id === node.id && selectedNode?.type === type;
+    const isDragging = draggingNode?.id === node.id && draggingNode?.type === type;
     const isControl = type === 'control';
     
     return (
       <div
         key={node.id}
         className={cn(
-          "absolute -translate-x-1/2 -translate-y-1/2 shadow-xl cursor-move transition-transform pointer-events-none",
+          "absolute -translate-x-1/2 -translate-y-1/2 shadow-xl cursor-move pointer-events-none",
+          !isDragging && "transition-transform duration-200",
           "before:content-[''] before:absolute before:top-1/2 before:left-1/2 before:-translate-x-1/2 before:-translate-y-1/2 before:w-12 before:h-12 before:rounded-full",
           isControl ? "w-6 h-6 rounded-lg border-2 border-white bg-black/50" : "w-8 h-8 rounded-full border-4 border-white",
           isSelected ? "scale-125 z-50" : "scale-100 z-40"
@@ -375,21 +444,27 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
     );
   };
 
+  // Calculate the best fit for the gradient within the container
+  const containerAspect = containerSize.width / containerSize.height;
+  const contentAspect = settings.ratio.width / settings.ratio.height;
+  const isWiderThanContainer = contentAspect > containerAspect;
+
   return (
-    <div ref={containerRef} className={cn("relative overflow-hidden flex items-center justify-center", className)}>
+    <div ref={containerRef} className={cn("relative overflow-hidden flex items-center justify-center touch-none", className)}>
       <div 
-        className="relative shadow-2xl overflow-hidden border-2 border-white/10 rounded-none"
+        className="relative shadow-2xl overflow-hidden border-2 border-white/10 rounded-none box-border"
         style={{ 
           aspectRatio: `${settings.ratio.width} / ${settings.ratio.height}`,
-          width: settings.ratio.width >= settings.ratio.height ? '100%' : 'auto',
-          height: settings.ratio.height > settings.ratio.width ? '100%' : 'auto',
+          width: isWiderThanContainer ? '100%' : 'auto',
+          height: isWiderThanContainer ? 'auto' : '100%',
           maxWidth: '100%',
-          maxHeight: '100%'
+          maxHeight: '100%',
+          display: 'block'
         }}
       >
         <canvas 
           ref={canvasRef} 
-          className="block touch-none w-full h-full cursor-crosshair"
+          className="block touch-none w-full h-full cursor-crosshair absolute inset-0"
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -421,9 +496,13 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
         )}
 
         {!draggingNode && !selectedNode && !hideTooltip && !hideNodes && (
-          <div className="absolute top-12 left-1/2 -translate-x-1/2 glass-dark px-4 py-2 rounded-full text-[10px] font-mono font-bold text-white/70 flex items-center gap-2 pointer-events-none shadow-xl border border-white/10">
-            <Plus size={12} />
-            Click to add node
+          <div className="absolute top-12 left-1/2 -translate-x-1/2 glass-dark px-6 py-4 rounded-[32px] text-[10px] font-mono font-bold text-white/70 flex flex-col items-center gap-2 pointer-events-none shadow-2xl border border-white/10 text-center backdrop-blur-xl">
+            <div className="flex items-center gap-2">
+              <span>Tap canvas to add node.</span>
+            </div>
+            <div className="flex items-center gap-2 opacity-60">
+              <span>Tap app title to generate random colorway.</span>
+            </div>
           </div>
         )}
       </div>

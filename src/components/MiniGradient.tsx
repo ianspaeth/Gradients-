@@ -12,10 +12,14 @@ interface MiniGradientProps {
 export const MiniGradient: React.FC<MiniGradientProps> = ({ 
   settings, 
   className,
-  width = 100,
-  height = 100
+  width: propWidth = 200,
+  height: propHeight = 200
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  
+  const ratio = settings.ratio || { width: 1, height: 1 };
+  const width = ratio.width >= ratio.height ? propWidth : propWidth * (ratio.width / ratio.height);
+  const height = ratio.height >= ratio.width ? propHeight : propHeight * (ratio.height / ratio.width);
 
   useEffect(() => {
     const canvas = canvasRef.current;

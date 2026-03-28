@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, RotateCcw, Layers, Circle, Sparkles, Settings2, Image as ImageIcon, X, Download, Trash2, Bookmark, BookmarkCheck, History, Undo2, Redo2, Compass, ArrowLeftRight } from 'lucide-react';
+import { Plus, RotateCcw, Layers, Circle, Sparkles, Settings2, Image as ImageIcon, X, Download, Trash2, Bookmark, BookmarkCheck, History, Undo2, Redo2, Compass, ArrowLeftRight, Slash, Cone, FileJson, FileCode, FileType, Copy, Upload } from 'lucide-react';
 import { GradientPreview, GradientPreviewHandle } from './components/GradientPreview';
 import { MiniGradient } from './components/MiniGradient';
 import { useGradientDataUrl } from './hooks/useGradientDataUrl';
@@ -8,6 +8,8 @@ import { ImageColorPicker } from './components/ImageColorPicker';
 import { GradientSettings, ColorStop, MeshPoint } from './types';
 import { cn } from './lib/utils';
 import { extractColorsFromImage } from './lib/imageUtils';
+import { drawVectorToPdf } from './lib/gradient-renderer';
+import { jsPDF } from 'jspdf';
 
 const INITIAL_STOPS: ColorStop[] = [
   { id: '1', color: '#6366f1', position: 0, midpoint: 50, x: 20, y: 20 },
@@ -119,8 +121,10 @@ const generateRandomSettings = (): GradientSettings => {
 
 export default function App() {
   const [settings, setSettings] = useState<GradientSettings>(generateRandomSettings());
-  const [history, setHistory] = useState<GradientSettings[]>([settings]);
-  const [historyIndex, setHistoryIndex] = useState(0);
+  const [historyState, setHistoryState] = useState({
+    items: [settings],
+    index: 0
+  });
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<{ id: string; type: 'mesh' | 'stop' } | null>(null);
@@ -129,17 +133,22 @@ export default function App() {
   const [colorMode, setColorMode] = useState<'hex' | 'rgb' | 'hsb'>('hsb');
   const [isHolding, setIsHolding] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
-  const previewWidth = settings.ratio.width >= settings.ratio.height ? 200 : 200 * (settings.ratio.width / settings.ratio.height);
-  const previewHeight = settings.ratio.height >= settings.ratio.width ? 200 : 200 * (settings.ratio.height / settings.ratio.width);
-  const currentGradientDataUrl = useGradientDataUrl(settings, previewWidth, previewHeight);
   const [showExportConfirm, setShowExportConfirm] = useState(false);
+  const [exportSettings, setExportSettings] = useState<GradientSettings | null>(null);
+  const activeSettings = exportSettings || settings;
+  const previewWidth = activeSettings.ratio.width >= activeSettings.ratio.height ? 200 : 200 * (activeSettings.ratio.width / activeSettings.ratio.height);
+  const previewHeight = activeSettings.ratio.height >= activeSettings.ratio.width ? 200 : 200 * (activeSettings.ratio.height / activeSettings.ratio.width);
+  const currentGradientDataUrl = useGradientDataUrl(activeSettings, previewWidth, previewHeight);
   const [confirmDpi, setConfirmDpi] = useState(300);
+  const [exportType, setExportType] = useState<'png' | 'svg' | 'pdf' | 'json'>('png');
+  const [showCopyToast, setShowCopyToast] = useState(false);
   const [savedGradients, setSavedGradients] = useState<{ id: string; name: string; settings: GradientSettings }[]>([]);
   const [colorHistory, setColorHistory] = useState<string[]>([]);
   const [hasAddedNode, setHasAddedNode] = useState(false);
   const [hsbState, setHsbState] = useState<{ id: string, hsb: { h: number, s: number, b: number } } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<GradientPreviewHandle>(null);
+  const exportPreviewRef = useRef<GradientPreviewHandle>(null);
   const popupRef = useRef<HTMLDivElement>(null);
 
   // Backdrop and Click Handling
@@ -151,34 +160,48 @@ export default function App() {
     setUploadedImageUrl(null);
   };
 
-  const pushToHistory = (newSettings: GradientSettings) => {
-    const currentSettings = JSON.stringify(newSettings);
-    const lastSettings = JSON.stringify(history[historyIndex]);
-    if (currentSettings === lastSettings) return;
-
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(JSON.parse(currentSettings));
-    if (newHistory.length > 50) newHistory.shift();
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  };
+  const pushToHistory = useCallback((newSettings: GradientSettings) => {
+    const currentSettingsStr = JSON.stringify(newSettings);
+    
+    setHistoryState(prev => {
+      const lastSettingsStr = JSON.stringify(prev.items[prev.index]);
+      if (currentSettingsStr === lastSettingsStr) return prev;
+      
+      const newItems = prev.items.slice(0, prev.index + 1);
+      newItems.push(JSON.parse(currentSettingsStr));
+      if (newItems.length > 50) newItems.shift();
+      
+      return {
+        items: newItems,
+        index: newItems.length - 1
+      };
+    });
+  }, []);
 
   const undo = () => {
-    if (historyIndex > 0) {
-      const prevIndex = historyIndex - 1;
-      setHistoryIndex(prevIndex);
-      setSettings(JSON.parse(JSON.stringify(history[prevIndex])));
-      setSelectedNode(null);
-    }
+    setHistoryState(prev => {
+      if (prev.index > 0) {
+        const nextIndex = prev.index - 1;
+        const nextSettings = JSON.parse(JSON.stringify(prev.items[nextIndex]));
+        setSettings(nextSettings);
+        setSelectedNode(null);
+        return { ...prev, index: nextIndex };
+      }
+      return prev;
+    });
   };
 
   const redo = () => {
-    if (historyIndex < history.length - 1) {
-      const nextIndex = historyIndex + 1;
-      setHistoryIndex(nextIndex);
-      setSettings(JSON.parse(JSON.stringify(history[nextIndex])));
-      setSelectedNode(null);
-    }
+    setHistoryState(prev => {
+      if (prev.index < prev.items.length - 1) {
+        const nextIndex = prev.index + 1;
+        const nextSettings = JSON.parse(JSON.stringify(prev.items[nextIndex]));
+        setSettings(nextSettings);
+        setSelectedNode(null);
+        return { ...prev, index: nextIndex };
+      }
+      return prev;
+    });
   };
 
   // Load saved gradients on mount
@@ -214,7 +237,7 @@ export default function App() {
   const addToColorHistory = (color: string) => {
     setColorHistory(prev => {
       const filtered = prev.filter(c => c.toLowerCase() !== color.toLowerCase());
-      const next = [color, ...filtered].slice(0, 12);
+      const next = [color, ...filtered].slice(0, 36);
       return next;
     });
   };
@@ -249,45 +272,74 @@ export default function App() {
     setShowLibrary(false);
   };
 
+  const randomizeColors = () => {
+    const next = {
+      ...settings,
+      stops: settings.stops.map(s => ({ ...s, color: generateRandomColor() })),
+      meshPoints: settings.meshPoints.map(p => ({ ...p, color: generateRandomColor() })),
+    };
+    setSettings(next);
+    pushToHistory(next);
+    setHasAddedNode(true);
+  };
+
   const primaryColor = settings.type === 'mesh' 
     ? settings.meshPoints[0]?.color || '#6366f1'
     : settings.stops[0]?.color || '#6366f1';
 
   const addStop = useCallback((color: string = '#ec4899', x?: number, y?: number) => {
     const newId = Math.random().toString(36).substr(2, 9);
-    const lastStop = settings.stops[settings.stops.length - 1];
-    const newPosition = Math.min(100, lastStop.position + 10);
     
-    setSettings(prev => {
-      const next = {
-        ...prev,
-        stops: [...prev.stops, { 
-          id: newId, 
-          color, 
-          position: newPosition,
-          midpoint: 50,
-          x: x ?? (Math.random() * 80 + 10),
-          y: y ?? (Math.random() * 80 + 10)
-        }].sort((a, b) => a.position - b.position),
-      };
-      pushToHistory(next);
-      return next;
-    });
+    let newPosition = 50;
+    let targetX = x ?? (Math.random() * 80 + 10);
+    let targetY = y ?? (Math.random() * 80 + 10);
+
+    // If coordinates are provided (from a click/tap), project them onto the control line
+    if (x !== undefined && y !== undefined) {
+      const cp = settings.controlPoints || { start: { x: 20, y: 20 }, end: { x: 80, y: 80 } };
+      const dx = cp.end.x - cp.start.x;
+      const dy = cp.end.y - cp.start.y;
+      const lenSq = dx * dx + dy * dy;
+
+      if (lenSq > 0) {
+        // Project (x, y) onto the line segment defined by cp.start and cp.end
+        const t = Math.max(0, Math.min(1, ((x - cp.start.x) * dx + (y - cp.start.y) * dy) / lenSq));
+        newPosition = t * 100;
+        targetX = cp.start.x + t * dx;
+        targetY = cp.start.y + t * dy;
+      }
+    } else {
+      // Fallback if no coordinates provided
+      const lastStop = settings.stops[settings.stops.length - 1];
+      newPosition = Math.min(100, lastStop.position + 10);
+    }
+    
+    const next = {
+      ...settings,
+      stops: [...settings.stops, { 
+        id: newId, 
+        color, 
+        position: newPosition,
+        midpoint: 50,
+        x: targetX,
+        y: targetY
+      }].sort((a, b) => a.position - b.position),
+    };
+    setSettings(next);
+    pushToHistory(next);
     setHasAddedNode(true);
-  }, [settings.stops, history, historyIndex]);
+  }, [settings, pushToHistory]);
 
   const removeStop = useCallback((id: string) => {
     if (settings.stops.length <= 2) return;
-    setSettings(prev => {
-      const next = {
-        ...prev,
-        stops: prev.stops.filter(s => s.id !== id),
-      };
-      pushToHistory(next);
-      return next;
-    });
+    const next = {
+      ...settings,
+      stops: settings.stops.filter(s => s.id !== id),
+    };
+    setSettings(next);
+    pushToHistory(next);
     if (selectedNode?.id === id) setSelectedNode(null);
-  }, [settings.stops.length, selectedNode, history, historyIndex]);
+  }, [settings, selectedNode, pushToHistory]);
 
   const updateStop = useCallback((id: string, updates: Partial<ColorStop>) => {
     setSettings(prev => ({
@@ -305,35 +357,31 @@ export default function App() {
 
   const addMeshPoint = useCallback((color: string = '#6366f1', x?: number, y?: number) => {
     const newId = Math.random().toString(36).substr(2, 9);
-    setSettings(prev => {
-      const next = {
-        ...prev,
-        meshPoints: [...prev.meshPoints, { 
-          id: newId, 
-          color, 
-          x: x ?? (Math.random() * 100), 
-          y: y ?? (Math.random() * 100), 
-          radius: 50 
-        }],
-      };
-      pushToHistory(next);
-      return next;
-    });
+    const next = {
+      ...settings,
+      meshPoints: [...settings.meshPoints, { 
+        id: newId, 
+        color, 
+        x: x ?? (Math.random() * 100), 
+        y: y ?? (Math.random() * 100), 
+        radius: 50 
+      }],
+    };
+    setSettings(next);
+    pushToHistory(next);
     setHasAddedNode(true);
-  }, [history, historyIndex]);
+  }, [settings, pushToHistory]);
 
   const removeMeshPoint = useCallback((id: string) => {
     if (settings.meshPoints.length <= 1) return;
-    setSettings(prev => {
-      const next = {
-        ...prev,
-        meshPoints: prev.meshPoints.filter(p => p.id !== id),
-      };
-      pushToHistory(next);
-      return next;
-    });
+    const next = {
+      ...settings,
+      meshPoints: settings.meshPoints.filter(p => p.id !== id),
+    };
+    setSettings(next);
+    pushToHistory(next);
     if (selectedNode?.id === id) setSelectedNode(null);
-  }, [settings.meshPoints.length, selectedNode, history, historyIndex]);
+  }, [settings, selectedNode, pushToHistory]);
 
   const updateMeshPoint = useCallback((id: string, updates: Partial<MeshPoint>) => {
     setSettings(prev => ({
@@ -454,17 +502,12 @@ export default function App() {
 
   const handleExport = () => {
     setConfirmDpi(settings.exportDpi);
+    setExportType('png');
     setShowExportConfirm(true);
     setSelectedNode(null);
   };
 
-  const executeExport = async (dpi: number) => {
-    if (!previewRef.current) return;
-    setShowExportConfirm(false);
-    
-    // Update settings with the confirmed DPI for future exports
-    setSettings(prev => ({ ...prev, exportDpi: dpi }));
-
+  const getExportFilename = (extension: string) => {
     const now = new Date();
     const day = now.getDate().toString().padStart(2, '0');
     const month = (now.getMonth() + 1).toString().padStart(2, '0');
@@ -472,63 +515,177 @@ export default function App() {
     const hh = now.getHours().toString().padStart(2, '0');
     const mm = now.getMinutes().toString().padStart(2, '0');
     const timestamp = `${day}.${month}.${year}_${hh}${mm}`;
-    const filename = `stgradient_${timestamp}.png`;
-
-    // Try Web Share API first (best for mobile "Save to Photos")
-    try {
-      if (navigator.share && navigator.canShare) {
-        const blob = await previewRef.current.getExportBlob(dpi);
-        if (blob) {
-          const file = new File([blob], filename, { type: 'image/png' });
-          if (navigator.canShare({ files: [file] })) {
-            await navigator.share({
-              files: [file],
-              title: 'GRADIENTS! GRADIENTS! GRADIENTS!',
-              text: 'My custom gradient from GRADIENTS! GRADIENTS! GRADIENTS!'
-            });
-            return;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Sharing failed, falling back to download', e);
-    }
-
-    // Fallback to standard download
-    const dataUrl = previewRef.current.getExportDataUrl(dpi);
-    if (dataUrl) {
-      const link = document.createElement('a');
-      link.download = filename;
-      link.href = dataUrl;
-      link.click();
-    }
+    return `stgradient_${timestamp}.${extension}`;
   };
 
-  const activeNodeData = selectedNode 
-    ? (selectedNode.type === 'mesh' 
-        ? settings.meshPoints.find(p => p.id === selectedNode.id)
-        : (selectedNode.type === 'control'
-            ? (selectedNode.id === 'start' 
-                ? settings.stops.reduce((prev, curr) => prev.position < curr.position ? prev : curr)
-                : settings.stops.reduce((prev, curr) => prev.position > curr.position ? prev : curr))
-            : settings.stops.find(s => s.id === selectedNode.id)))
-    : null;
+  const executeExport = async (dpi: number) => {
+    const activeRef = exportSettings ? exportPreviewRef : previewRef;
+    const currentRef = activeRef.current;
+    if (!currentRef) return;
+    
+    const activeSettings = exportSettings || settings;
+    
+    // Update settings with the confirmed DPI for future exports
+    if (!exportSettings) {
+      setSettings(prev => ({ ...prev, exportDpi: dpi }));
+    }
+
+    if (exportType === 'png') {
+      const filename = getExportFilename('png');
+      // Try Web Share API first (best for mobile "Save to Photos")
+      try {
+        if (navigator.share && navigator.canShare) {
+          const blob = await currentRef.getExportBlob(dpi);
+          if (blob) {
+            const file = new File([blob], filename, { type: 'image/png' });
+            if (navigator.canShare({ files: [file] })) {
+              await navigator.share({
+                files: [file],
+                title: 'GRADIENTS! GRADIENTS! GRADIENTS!',
+                text: 'My custom gradient from GRADIENTS! GRADIENTS! GRADIENTS!'
+              });
+              setExportSettings(null);
+              setShowExportConfirm(false);
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Sharing failed, falling back to download', e);
+      }
+
+      // Fallback to standard download
+      const dataUrl = currentRef.getExportDataUrl(dpi);
+      if (dataUrl) {
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = dataUrl;
+        link.click();
+      }
+    } else if (exportType === 'svg') {
+      const svgString = currentRef.getExportSvg(dpi);
+      const blob = new Blob([svgString], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.download = getExportFilename('svg');
+      link.href = url;
+      link.click();
+      URL.revokeObjectURL(url);
+    } else if (exportType === 'pdf') {
+      const pdf = new jsPDF({
+        orientation: activeSettings.ratio.width >= activeSettings.ratio.height ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [activeSettings.ratio.width * 100, activeSettings.ratio.height * 100]
+      });
+      
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+
+      // Try vector export first
+      const success = drawVectorToPdf(pdf, pdfWidth, pdfHeight, activeSettings);
+      
+      if (!success) {
+        // Fallback to raster if vector export failed (e.g. noise is present)
+        const dataUrl = currentRef.getExportDataUrl(dpi);
+        if (dataUrl) {
+          const imgProps = pdf.getImageProperties(dataUrl);
+          const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
+          pdf.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, imgHeight);
+        }
+      }
+      
+      pdf.save(getExportFilename('pdf'));
+    } else if (exportType === 'json') {
+      const jsonString = JSON.stringify(activeSettings, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.download = getExportFilename('gdnt');
+      link.href = url;
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+    setExportSettings(null);
+    setShowExportConfirm(false);
+  };
+
+  const copyBulkHex = () => {
+    const colors = activeSettings.type === 'mesh' 
+      ? activeSettings.meshPoints.map(p => p.color)
+      : activeSettings.stops.map(s => s.color);
+    
+    const hexString = colors.join(', ');
+    navigator.clipboard.writeText(hexString).then(() => {
+      setShowCopyToast(true);
+      setTimeout(() => setShowCopyToast(false), 2000);
+    });
+  };
+
+  const handleGdntUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const uploadedSettings = JSON.parse(event.target?.result as string);
+        // Basic validation
+        if (uploadedSettings.type && (uploadedSettings.stops || uploadedSettings.meshPoints)) {
+          // Only add to library, do not open in main canvas
+          const id = Math.random().toString(36).substr(2, 9);
+          const now = new Date();
+          const day = now.getDate().toString().padStart(2, '0');
+          const month = now.toLocaleString('en-GB', { month: 'short' });
+          const year = now.getFullYear();
+          const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+          const name = `Imported ${day} ${month} ${year}, ${time}`;
+          
+          setSavedGradients(prev => [...prev, { id, name, settings: JSON.parse(JSON.stringify(uploadedSettings)) }]);
+          setShowSaveToast(true);
+          setTimeout(() => setShowSaveToast(false), 2000);
+
+          setShowLibrary(true); // Keep library open
+        }
+      } catch (err) {
+        console.error('Failed to parse .gdnt file', err);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const activeNodeData = React.useMemo(() => {
+    if (!selectedNode) return null;
+    if (selectedNode.type === 'mesh') {
+      return settings.meshPoints.find(p => p.id === selectedNode.id);
+    }
+    if (selectedNode.type === 'control') {
+      return selectedNode.id === 'start' 
+        ? settings.stops.reduce((prev, curr) => prev.position < curr.position ? prev : curr)
+        : settings.stops.reduce((prev, curr) => prev.position > curr.position ? prev : curr);
+    }
+    return settings.stops.find(s => s.id === selectedNode.id);
+  }, [settings.meshPoints, settings.stops, selectedNode]);
   
   useEffect(() => {
     if (activeNodeData && selectedNode) {
       const currentHsb = hexToHsb(activeNodeData.color);
-      if (!hsbState || hsbState.id !== selectedNode.id) {
+      
+      // Only update if the ID changed or if the HSB values are significantly different
+      // This prevents infinite loops caused by hex-to-hsb rounding differences
+      const isDifferentId = !hsbState || hsbState.id !== selectedNode.id;
+      const isDifferentColor = !hsbState || 
+                              Math.abs(hsbState.hsb.h - currentHsb.h) > 0.5 || 
+                              Math.abs(hsbState.hsb.s - currentHsb.s) > 0.5 || 
+                              Math.abs(hsbState.hsb.b - currentHsb.b) > 0.5;
+
+      if (isDifferentId || isDifferentColor) {
         setHsbState({ id: selectedNode.id, hsb: currentHsb });
-      } else {
-        const hsbHex = hsbToHex(hsbState.hsb.h, hsbState.hsb.s, hsbState.hsb.b);
-        if (hsbHex.toLowerCase() !== activeNodeData.color.toLowerCase()) {
-          setHsbState({ id: selectedNode.id, hsb: currentHsb });
-        }
       }
-    } else {
+    } else if (hsbState !== null) {
       setHsbState(null);
     }
-  }, [activeNodeData?.color, selectedNode?.id]);
+  }, [activeNodeData?.color, selectedNode?.id, hsbState]);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-black flex flex-col relative font-sans select-none">
@@ -539,19 +696,24 @@ export default function App() {
           animate={{ opacity: 1, y: 0 }}
           className="flex flex-col items-center"
         >
-          <h1 
-            className="text-sm font-mono font-black tracking-[0.5em] uppercase bg-clip-text text-transparent transition-all duration-500 text-center leading-tight"
-            style={{ 
-              backgroundImage: `url(${currentGradientDataUrl})`,
-              backgroundSize: '100% 100%',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent'
-            }}
+          <button 
+            onClick={randomizeColors}
+            className="flex flex-col items-center group active:scale-95 transition-transform outline-none"
           >
-            GRADIENTS!<br />
-            GRADIENTS!<br />
-            GRADIENTS!
-          </h1>
+            <h1 
+              className="text-sm font-mono font-black tracking-[0.5em] uppercase bg-clip-text text-transparent transition-all duration-500 text-center leading-tight group-hover:opacity-80"
+              style={{ 
+                backgroundImage: `url(${currentGradientDataUrl})`,
+                backgroundSize: '100% 100%',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent'
+              }}
+            >
+              GRADIENTS!<br />
+              GRADIENTS!<br />
+              GRADIENTS!
+            </h1>
+          </button>
         </motion.div>
       </div>
 
@@ -569,7 +731,10 @@ export default function App() {
             onUpdateControlPoint={updateControlPoint}
             onSelectNode={(id, type) => setSelectedNode(id ? { id, type } : null)}
             onAddNode={(x, y) => settings.type === 'mesh' ? addMeshPoint(primaryColor, x, y) : addStop(primaryColor, x, y)}
-            onInteractionEnd={() => pushToHistory(settings)}
+            onInteractionEnd={() => {
+              pushToHistory(settings);
+              setHasAddedNode(true);
+            }}
             onHoldChange={setIsHolding}
             selectedNode={selectedNode}
             isOverlayOpen={showGlobalSettings || showLibrary || showExportConfirm || !!uploadedImageUrl}
@@ -617,7 +782,7 @@ export default function App() {
             <div className="flex items-center bg-neutral-950 backdrop-blur-xl rounded-full p-1 gap-1">
               <button 
                 onClick={undo}
-                disabled={historyIndex === 0}
+                disabled={historyState.index === 0}
                 className="p-2 text-white/70 hover:text-white transition-all active:scale-90 disabled:opacity-20 disabled:cursor-not-allowed"
                 title="Undo"
               >
@@ -626,7 +791,7 @@ export default function App() {
               <div className="w-[1px] h-4 bg-white/10" />
               <button 
                 onClick={redo}
-                disabled={historyIndex === history.length - 1}
+                disabled={historyState.index === historyState.items.length - 1}
                 className="p-2 text-white/70 hover:text-white transition-all active:scale-90 disabled:opacity-20 disabled:cursor-not-allowed"
                 title="Redo"
               >
@@ -966,9 +1131,9 @@ export default function App() {
                   </div>
                   <div className="bg-neutral-100 p-1 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-1">
                     {[
-                      { id: 'linear', icon: Layers, label: 'Linear' },
+                      { id: 'linear', icon: Slash, label: 'Linear' },
                       { id: 'radial', icon: Circle, label: 'Radial' },
-                      { id: 'conic', icon: Compass, label: 'Conic' },
+                      { id: 'conic', icon: Cone, label: 'Conic' },
                       { id: 'mesh', icon: Sparkles, label: 'Mesh' },
                     ].map((type) => (
                       <button
@@ -1137,45 +1302,51 @@ export default function App() {
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
             className="fixed inset-x-0 bottom-0 z-[100] w-full max-w-2xl mx-auto h-[50vh] bg-white/70 backdrop-blur-xl rounded-t-[40px] shadow-[0_-20px_50px_rgba(0,0,0,0.3)] border-t border-white/40 overflow-hidden"
           >
-            {/* Close - Floating */}
-            <div className="absolute top-5 inset-x-5 flex items-center justify-end z-20 pointer-events-none">
+            {/* Top Bar - Floating Actions */}
+            <div className="absolute top-5 inset-x-5 flex items-center justify-between z-20 pointer-events-none">
+              <div className="flex items-center gap-2 pointer-events-auto">
+                <input type="file" id="gdnt-upload" className="hidden" accept=".gdnt,.json" onChange={handleGdntUpload} />
+                <label 
+                  htmlFor="gdnt-upload"
+                  className="p-2.5 bg-black/60 rounded-full text-white hover:scale-110 transition-transform cursor-pointer shadow-xl"
+                  title="Upload .gdnt file"
+                >
+                  <Upload size={18} />
+                </label>
+              </div>
+
+              {/* Centered Title */}
+              <div className="absolute left-1/2 -translate-x-1/2 flex items-center pointer-events-auto">
+                <h1 className="text-sm font-mono font-black text-neutral-900 uppercase tracking-[0.2em] leading-none whitespace-nowrap">
+                  Gradient Library
+                </h1>
+              </div>
+
               <button 
                 onClick={() => setShowLibrary(false)}
                 className="p-2.5 bg-black/60 rounded-full text-white hover:scale-110 transition-transform pointer-events-auto shadow-xl"
+                title="Close"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div className="h-full overflow-y-auto p-8 pt-7 pb-12">
-              <div className="flex items-center justify-between mb-8 pr-10">
-              <div>
-                <h1 className="text-sm font-mono font-black text-neutral-900 uppercase tracking-[0.2em] leading-none">
-                  Gradient Library
-                </h1>
-                <p className="text-[10px] font-mono text-neutral-400 tracking-widest uppercase mt-1">
-                  {savedGradients.length} Saved Designs
-                </p>
-              </div>
-            </div>
-
-            {savedGradients.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-8">
+            <div className="h-full overflow-y-auto p-8 pt-24 pb-12">
+              {savedGradients.length > 0 ? (
+              <div className="columns-2 sm:columns-3 md:columns-4 gap-8">
                 {savedGradients.map((saved) => (
                   <div 
                     key={saved.id}
-                    className="group relative flex flex-col"
+                    className="break-inside-avoid mb-8 group relative flex flex-col bg-white rounded-xl overflow-hidden border border-neutral-200 shadow-sm"
                   >
-                    <div className="relative w-full aspect-square flex items-center justify-center bg-neutral-100 rounded-[32px] overflow-hidden p-4 border border-neutral-200 shadow-inner">
+                    <div className="relative w-full flex items-center justify-center bg-white p-4 shadow-inner">
                       <button
                         onClick={() => loadSavedGradient(saved.settings)}
-                        className="relative shadow-2xl transition-all hover:scale-105 active:scale-95 overflow-hidden rounded-xl border border-white/20 flex items-center justify-center"
+                        className="relative shadow-2xl transition-all hover:scale-105 active:scale-95 overflow-hidden border border-white/20 flex items-center justify-center"
                         style={{ 
                           aspectRatio: `${saved.settings.ratio?.width || 1} / ${saved.settings.ratio?.height || 1}`,
                           maxWidth: '100%',
-                          maxHeight: '100%',
-                          width: (saved.settings.ratio?.width || 1) >= (saved.settings.ratio?.height || 1) ? '100%' : 'auto',
-                          height: (saved.settings.ratio?.height || 1) > (saved.settings.ratio?.width || 1) ? '100%' : 'auto',
+                          width: '100%',
                         }}
                       >
                         <MiniGradient 
@@ -1185,15 +1356,33 @@ export default function App() {
                           height={200}
                         />
                       </button>
+                      
+                      {/* Delete Button - Top Left */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); deleteSavedGradient(saved.id); }}
-                        className="absolute top-4 right-4 p-2 bg-red-500 text-white rounded-full opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shadow-lg z-10"
+                        className="absolute top-4 left-4 p-2 bg-red-500 text-white rounded-full opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shadow-lg z-10"
+                        title="Delete"
                       >
-                        <X size={14} />
+                        <Trash2 size={14} />
+                      </button>
+
+                      {/* Download Button - Top Right */}
+                      <button 
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          setExportSettings(saved.settings);
+                          setConfirmDpi(saved.settings.exportDpi || 300);
+                          setExportType('png');
+                          setShowExportConfirm(true);
+                        }}
+                        className="absolute top-4 right-4 p-2 bg-black/60 text-white rounded-full opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shadow-lg z-10"
+                        title="Download"
+                      >
+                        <Download size={14} />
                       </button>
                     </div>
                     
-                    <div className="mt-4 px-2 space-y-1">
+                    <div className="p-4 space-y-1">
                       <input
                         type="text"
                         value={saved.name}
@@ -1221,15 +1410,17 @@ export default function App() {
 
       {/* Save Success Toast */}
       <AnimatePresence>
-        {showSaveToast && (
+        {(showSaveToast || showCopyToast) && (
           <motion.div
             initial={{ opacity: 0, y: 20, x: '-50%' }}
             animate={{ opacity: 1, y: 0, x: '-50%' }}
             exit={{ opacity: 0, y: -20, x: '-50%' }}
             className="absolute top-24 left-1/2 z-[100] bg-emerald-500 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 border border-white/20"
           >
-            <BookmarkCheck size={20} />
-            <span className="text-[10px] font-mono font-bold uppercase tracking-widest">Saved to Library</span>
+            {showSaveToast ? <BookmarkCheck size={20} /> : <Copy size={20} />}
+            <span className="text-[10px] font-mono font-bold uppercase tracking-widest">
+              {showSaveToast ? 'Saved to Library' : 'Hex Codes Copied'}
+            </span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1285,59 +1476,82 @@ export default function App() {
                   <h2 className="text-sm font-mono font-black text-neutral-900 tracking-[0.5em] uppercase">Export</h2>
                 </div>
                 <button 
-                  onClick={() => setShowExportConfirm(false)}
-                  className="p-2 bg-black/60 rounded-full text-white hover:scale-110 transition-transform"
+                  onClick={() => {
+                    setShowExportConfirm(false);
+                    setExportSettings(null);
+                  }}
+                  className="p-2 bg-black/60 rounded-2xl text-white hover:scale-110 transition-transform"
                 >
                   <X size={20} />
                 </button>
               </div>
 
               <div className="space-y-5">
-                <div className="flex items-center justify-start mb-2 px-1">
-                  <div className="flex items-center gap-2 bg-neutral-100 px-3 py-1 rounded-full border border-neutral-200">
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <div className="flex items-center gap-2 bg-neutral-100 px-3 py-1 rounded-2xl border border-neutral-200">
                     <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">Ratio</span>
-                    <span className="text-[10px] font-black text-neutral-900">{settings.ratio.width}:{settings.ratio.height}</span>
+                    <span className="text-[10px] font-black text-neutral-900">{activeSettings.ratio.width}:{activeSettings.ratio.height}</span>
                   </div>
+                  <button 
+                    onClick={copyBulkHex}
+                    className="flex items-center gap-2 bg-neutral-100 px-3 py-1 rounded-2xl border border-neutral-200 hover:bg-neutral-200 transition-colors"
+                  >
+                    <Copy size={10} className="text-neutral-400" />
+                    <span className="text-[10px] font-black text-neutral-900 uppercase tracking-widest">Copy Hex</span>
+                  </button>
                 </div>
 
-                <div className="relative aspect-square glass rounded-[40px] border border-white/20 overflow-hidden flex items-center justify-center p-4 sm:p-6">
-                  <div 
-                    className="shadow-2xl"
-                    style={{ 
-                      aspectRatio: `${settings.ratio.width} / ${settings.ratio.height}`,
-                      maxWidth: '100%',
-                      maxHeight: '100%',
-                      width: settings.ratio.width >= settings.ratio.height ? '100%' : 'auto',
-                      height: settings.ratio.height > settings.ratio.width ? '100%' : 'auto',
-                      backgroundImage: `url(${currentGradientDataUrl})`,
-                      backgroundSize: '100% 100%'
-                    }}
+                <div className="relative aspect-square glass rounded-2xl border border-white/20 overflow-hidden flex items-center justify-center p-4 sm:p-6">
+                  <GradientPreview 
+                    ref={exportPreviewRef}
+                    settings={exportSettings || settings} 
+                    hideNodes
+                    hideTooltip
+                    className="w-full h-full"
                   />
                 </div>
 
                 <div className="space-y-4">
-                  <div className="p-4 glass rounded-[32px] border border-white/20">
-                    <div className="flex justify-between text-[10px] font-black text-neutral-400 uppercase tracking-widest mb-2">
-                      <span>Texture Noise</span>
-                      <span className="text-black">{settings.noise}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={settings.noise}
-                      onChange={(e) => {
-                        const next = { ...settings, noise: parseInt(e.target.value) };
-                        setSettings(next);
-                      }}
-                      onMouseUp={() => pushToHistory(settings)}
-                      className="w-full h-2 bg-neutral-200 rounded-full appearance-none cursor-pointer"
-                      style={{ accentColor: '#000' }}
-                    />
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'png', icon: ImageIcon, label: 'PNG' },
+                      { id: 'svg', icon: FileCode, label: 'SVG' },
+                      { id: 'json', icon: FileJson, label: 'GDNT' },
+                    ].map((type) => (
+                      <button
+                        key={type.id}
+                        onClick={() => setExportType(type.id as any)}
+                        className={cn(
+                          "flex flex-col items-center justify-center gap-1.5 h-[68px] rounded-2xl border transition-all",
+                          exportType === type.id 
+                            ? "bg-black text-white border-black shadow-lg scale-105" 
+                            : "bg-white text-neutral-400 border-neutral-200 hover:border-neutral-300"
+                        )}
+                      >
+                        <type.icon size={16} />
+                        <span className="text-[8px] font-black uppercase tracking-widest">{type.label}</span>
+                      </button>
+                    ))}
                   </div>
 
-                  <div className="p-4 glass rounded-[32px] border border-white/20">
-                    <span className="text-[10px] font-black text-neutral-400 uppercase block mb-1">Export DPI</span>
+                  {exportType === 'svg' && (activeSettings.type === 'mesh' || activeSettings.type === 'conic') && (
+                    <p className="text-[10px] text-black font-black px-2 leading-relaxed uppercase tracking-tight">
+                      Gradient turned to vector shapes to preserve design. Gradient uneditable in other programs.
+                    </p>
+                  )}
+                  {exportType === 'svg' && (activeSettings.type === 'linear' || activeSettings.type === 'radial') && (
+                    <p className="text-[10px] text-black font-black px-2 leading-relaxed uppercase tracking-tight">
+                      Gradient editable it other programs, like Illustrator.
+                    </p>
+                  )}
+                  {exportType === 'json' && (
+                    <p className="text-[10px] text-black font-black px-2 leading-relaxed uppercase tracking-tight">
+                      Gradients!!! App-specific format so you can re-uploaded into this app later to rework.
+                    </p>
+                  )}
+
+                  <div className="px-4 glass rounded-2xl border border-white/20 h-[68px] flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-neutral-400 uppercase block mb-0.5">Export DPI</span>
                     <input
                       type="number" 
                       value={confirmDpi}
@@ -1349,7 +1563,7 @@ export default function App() {
 
                 <button
                   onClick={() => executeExport(confirmDpi)}
-                  className="w-full py-4 text-white rounded-[32px] font-black uppercase tracking-[0.2em] text-sm shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
+                  className="w-full py-4 text-white rounded-2xl font-black uppercase tracking-[0.2em] text-sm shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
                   style={{
                     backgroundImage: `url(${currentGradientDataUrl})`,
                     backgroundSize: 'cover',
@@ -1358,7 +1572,7 @@ export default function App() {
                   }}
                 >
                   <Download size={20} style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }} />
-                  Generate & Save
+                  {exportType === 'json' ? 'download gdnt' : `Save as ${exportType.toUpperCase()}`}
                 </button>
               </div>
             </motion.div>
