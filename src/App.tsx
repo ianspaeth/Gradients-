@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, RotateCcw, Layers, Circle, Sparkles, Settings2, Image as ImageIcon, X, Download, Trash2, Bookmark, BookmarkCheck, History, Undo2, Redo2, Compass, ArrowLeftRight, Slash, Cone, FileJson, FileCode, FileType, Copy, Upload } from 'lucide-react';
+import { Plus, RotateCcw, Layers, Circle, Sparkles, Settings2, Image as ImageIcon, X, Download, Trash2, Bookmark, BookmarkCheck, History, Undo2, Redo2, Compass, ArrowLeftRight, Slash, Cone, FileJson, FileCode, FileType, Copy, Upload, FileDown, FileUp } from 'lucide-react';
 import { GradientPreview, GradientPreviewHandle } from './components/GradientPreview';
 import { MiniGradient } from './components/MiniGradient';
 import { useGradientDataUrl } from './hooks/useGradientDataUrl';
@@ -127,7 +127,7 @@ export default function App() {
   });
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<{ id: string; type: 'mesh' | 'stop' } | null>(null);
+  const [selectedNode, setSelectedNode] = useState<{ id: string; type: 'mesh' | 'stop' | 'control' } | null>(null);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [colorMode, setColorMode] = useState<'hex' | 'rgb' | 'hsb'>('hsb');
@@ -143,8 +143,12 @@ export default function App() {
   const [exportType, setExportType] = useState<'png' | 'svg' | 'pdf' | 'json'>('png');
   const [showCopyToast, setShowCopyToast] = useState(false);
   const [savedGradients, setSavedGradients] = useState<{ id: string; name: string; settings: GradientSettings }[]>([]);
+  const [isBulkExporting, setIsBulkExporting] = useState(false);
+  const [isBulkImporting, setIsBulkImporting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState(0);
+  const bulkImportInputRef = useRef<HTMLInputElement>(null);
   const [colorHistory, setColorHistory] = useState<string[]>([]);
-  const [hasAddedNode, setHasAddedNode] = useState(false);
+  const [hasInteracted, setHasInteracted] = useState(false);
   const [hsbState, setHsbState] = useState<{ id: string, hsb: { h: number, s: number, b: number } } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<GradientPreviewHandle>(null);
@@ -158,6 +162,7 @@ export default function App() {
     setShowLibrary(false);
     setShowExportConfirm(false);
     setUploadedImageUrl(null);
+    setHasInteracted(true);
   };
 
   const pushToHistory = useCallback((newSettings: GradientSettings) => {
@@ -272,6 +277,83 @@ export default function App() {
     setShowLibrary(false);
   };
 
+  const exportLibrary = () => {
+    if (savedGradients.length === 0) return;
+    setIsBulkExporting(true);
+    setBulkProgress(0);
+    
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += Math.random() * 15;
+      if (progress >= 100) {
+        progress = 100;
+        clearInterval(interval);
+        
+        const dataStr = JSON.stringify(savedGradients, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `gradient-library-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        setTimeout(() => setIsBulkExporting(false), 500);
+      }
+      setBulkProgress(progress);
+    }, 100);
+  };
+
+  const handleBulkImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsBulkImporting(true);
+    setBulkProgress(0);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const imported = JSON.parse(event.target?.result as string);
+        if (Array.isArray(imported)) {
+          const validGradients = imported.filter(g => g.settings);
+          
+          setSavedGradients(prev => {
+            const newGradients = validGradients.map(g => ({
+              id: Math.random().toString(36).substr(2, 9),
+              name: g.name || 'Imported Gradient',
+              settings: g.settings
+            }));
+            return [...prev, ...newGradients];
+          });
+          
+          let progress = 0;
+          const interval = setInterval(() => {
+            progress += Math.random() * 20;
+            if (progress >= 100) {
+              progress = 100;
+              clearInterval(interval);
+              setTimeout(() => setIsBulkImporting(false), 500);
+            }
+            setBulkProgress(progress);
+          }, 100);
+        } else {
+          alert('Invalid library file format.');
+          setIsBulkImporting(false);
+        }
+      } catch (err) {
+        console.error('Failed to import library', err);
+        alert('Failed to parse library file.');
+        setIsBulkImporting(false);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const randomizeColors = () => {
     const next = {
       ...settings,
@@ -280,7 +362,7 @@ export default function App() {
     };
     setSettings(next);
     pushToHistory(next);
-    setHasAddedNode(true);
+    setHasInteracted(true);
   };
 
   const primaryColor = settings.type === 'mesh' 
@@ -327,7 +409,7 @@ export default function App() {
     };
     setSettings(next);
     pushToHistory(next);
-    setHasAddedNode(true);
+    setHasInteracted(true);
   }, [settings, pushToHistory]);
 
   const removeStop = useCallback((id: string) => {
@@ -369,7 +451,7 @@ export default function App() {
     };
     setSettings(next);
     pushToHistory(next);
-    setHasAddedNode(true);
+    setHasInteracted(true);
   }, [settings, pushToHistory]);
 
   const removeMeshPoint = useCallback((id: string) => {
@@ -468,7 +550,7 @@ export default function App() {
       console.error('Error processing image:', error);
     } finally {
       setIsProcessingImage(false);
-      setHasAddedNode(true);
+      setHasInteracted(true);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -671,13 +753,11 @@ export default function App() {
     if (activeNodeData && selectedNode) {
       const currentHsb = hexToHsb(activeNodeData.color);
       
-      // Only update if the ID changed or if the HSB values are significantly different
-      // This prevents infinite loops caused by hex-to-hsb rounding differences
+      // Check if the current hsbState already produces this hex color
+      // If it does, we don't want to override it with lossy hexToHsb values (e.g. when S or B is 0)
+      const currentColorFromHsb = hsbState ? hsbToHex(hsbState.hsb.h, hsbState.hsb.s, hsbState.hsb.b) : null;
+      const isDifferentColor = !hsbState || currentColorFromHsb !== activeNodeData.color.toLowerCase();
       const isDifferentId = !hsbState || hsbState.id !== selectedNode.id;
-      const isDifferentColor = !hsbState || 
-                              Math.abs(hsbState.hsb.h - currentHsb.h) > 0.5 || 
-                              Math.abs(hsbState.hsb.s - currentHsb.s) > 0.5 || 
-                              Math.abs(hsbState.hsb.b - currentHsb.b) > 0.5;
 
       if (isDifferentId || isDifferentColor) {
         setHsbState({ id: selectedNode.id, hsb: currentHsb });
@@ -685,7 +765,7 @@ export default function App() {
     } else if (hsbState !== null) {
       setHsbState(null);
     }
-  }, [activeNodeData?.color, selectedNode?.id, hsbState]);
+  }, [activeNodeData?.color, selectedNode?.id]); // hsbState is intentionally omitted to prevent infinite loops
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-black flex flex-col relative font-sans select-none">
@@ -697,7 +777,10 @@ export default function App() {
           className="flex flex-col items-center"
         >
           <button 
-            onClick={randomizeColors}
+            onClick={() => {
+              randomizeColors();
+              setHasInteracted(true);
+            }}
             className="flex flex-col items-center group active:scale-95 transition-transform outline-none"
           >
             <h1 
@@ -729,16 +812,23 @@ export default function App() {
             onUpdateStop={updateStop}
             onUpdateStopMidpoint={updateStopMidpoint}
             onUpdateControlPoint={updateControlPoint}
-            onSelectNode={(id, type) => setSelectedNode(id ? { id, type } : null)}
-            onAddNode={(x, y) => settings.type === 'mesh' ? addMeshPoint(primaryColor, x, y) : addStop(primaryColor, x, y)}
+            onSelectNode={(id, type) => {
+              setSelectedNode(id ? { id, type } : null);
+              if (id) setHasInteracted(true);
+            }}
+            onAddNode={(x, y) => {
+              setHasInteracted(true);
+              if (settings.type === 'mesh') addMeshPoint(primaryColor, x, y);
+              else addStop(primaryColor, x, y);
+            }}
             onInteractionEnd={() => {
               pushToHistory(settings);
-              setHasAddedNode(true);
+              setHasInteracted(true);
             }}
             onHoldChange={setIsHolding}
             selectedNode={selectedNode}
             isOverlayOpen={showGlobalSettings || showLibrary || showExportConfirm || !!uploadedImageUrl}
-            hideTooltip={hasAddedNode}
+            hideTooltip={hasInteracted}
             hideNodes={isHolding}
             className="w-full h-full"
           />
@@ -753,7 +843,10 @@ export default function App() {
           >
             <div className="flex items-center bg-neutral-950 backdrop-blur-xl rounded-full p-1 gap-1">
               <button 
-                onClick={saveCurrentGradient}
+                onClick={() => {
+                  saveCurrentGradient();
+                  setHasInteracted(true);
+                }}
                 className="p-2 text-white/70 hover:text-white transition-all active:scale-90"
                 title="Save to Library"
               >
@@ -766,6 +859,7 @@ export default function App() {
                   setShowGlobalSettings(false);
                   setSelectedNode(null);
                   setUploadedImageUrl(null);
+                  setHasInteracted(true);
                 }}
                 className="p-2 text-white/70 hover:text-white transition-all active:scale-90"
                 title="Open Library"
@@ -811,6 +905,7 @@ export default function App() {
                   setShowLibrary(false);
                   setSelectedNode(null);
                   setUploadedImageUrl(null);
+                  setHasInteracted(true);
                 }}
                 className="p-2 text-white/70 hover:text-white transition-all active:scale-90"
                 title="Settings"
@@ -819,7 +914,10 @@ export default function App() {
               </button>
               <div className="w-[1px] h-4 bg-white/10" />
               <button 
-                onClick={handleExport}
+                onClick={() => {
+                  handleExport();
+                  setHasInteracted(true);
+                }}
                 className="p-2 text-white/70 hover:text-white transition-all active:scale-90"
                 title="Export Gradient"
               >
@@ -856,18 +954,25 @@ export default function App() {
           >
             {/* Top Bar - Floating Actions */}
             <div className="absolute top-5 inset-x-5 flex items-center justify-between z-20 pointer-events-none">
-              <button 
-                onClick={() => {
-                  if (selectedNode?.type === 'mesh') removeMeshPoint(selectedNode.id);
-                  else if (selectedNode?.type === 'stop') removeStop(selectedNode.id);
-                }}
-                className="p-2.5 bg-red-500 rounded-full text-white hover:bg-red-600 hover:scale-110 transition-all pointer-events-auto shadow-xl"
-                title="Delete Node"
-              >
-                <Trash2 size={18} />
-              </button>
+              <div className="flex items-center gap-2 pointer-events-auto">
+                <button 
+                  onClick={() => {
+                    if (selectedNode?.type === 'mesh') removeMeshPoint(selectedNode.id);
+                    else if (selectedNode?.type === 'stop') removeStop(selectedNode.id);
+                  }}
+                  className="p-2.5 bg-red-500 rounded-full text-white hover:bg-red-600 hover:scale-110 transition-all shadow-xl"
+                  title="Delete Node"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
 
-              <div /> {/* Spacer to keep buttons at ends */}
+              {/* Centered Title */}
+              <div className="absolute left-1/2 -translate-x-1/2 flex items-center pointer-events-auto">
+                <h1 className="text-sm font-mono font-black text-neutral-900 uppercase tracking-[0.2em] leading-none whitespace-nowrap">
+                  Color Node Settings
+                </h1>
+              </div>
 
               <button 
                 onClick={() => {
@@ -881,12 +986,7 @@ export default function App() {
               </button>
             </div>
             
-            <div className="h-full overflow-y-auto p-8 pt-7 pb-12">
-              <div className="flex items-center justify-center mb-8">
-                <h1 className="text-sm font-mono font-black text-neutral-900 uppercase tracking-[0.2em] leading-none">
-                  Color Node Settings
-                </h1>
-              </div>
+            <div className="h-full overflow-y-auto p-8 pt-24 pb-12">
               <div className="flex flex-col gap-8">
                 {/* Top Section: Preview + HSB Sliders */}
                 <div className="flex items-center gap-8">
@@ -935,6 +1035,7 @@ export default function App() {
                                   const val = parseInt(e.target.value) || 0;
                                   const newHsb = { ...hsb, [channel]: val };
                                   setHsbState({ id: selectedNode!.id, hsb: newHsb });
+                                  setHasInteracted(true);
                                   const hex = hsbToHex(newHsb.h, newHsb.s, newHsb.b);
                                   if (selectedNode?.type === 'mesh') updateMeshPoint(selectedNode.id, { color: hex });
                                   else if (selectedNode?.type === 'stop') updateStop(selectedNode.id, { color: hex });
@@ -954,6 +1055,7 @@ export default function App() {
                               const val = parseInt(e.target.value) || 0;
                               const newHsb = { ...hsb, [channel]: val };
                               setHsbState({ id: selectedNode!.id, hsb: newHsb });
+                              setHasInteracted(true);
                               const hex = hsbToHex(newHsb.h, newHsb.s, newHsb.b);
                               if (selectedNode?.type === 'mesh') updateMeshPoint(selectedNode.id, { color: hex });
                               else if (selectedNode?.type === 'stop') updateStop(selectedNode.id, { color: hex });
@@ -1101,35 +1203,42 @@ export default function App() {
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
             className="fixed inset-x-0 bottom-0 z-[100] w-full max-w-2xl mx-auto h-[50vh] bg-white/70 backdrop-blur-xl rounded-t-[40px] shadow-[0_-20px_50px_rgba(0,0,0,0.3)] border-t border-white/40 overflow-hidden"
           >
-            {/* Close - Floating */}
-            <div className="absolute top-5 inset-x-5 flex items-center justify-end z-20 pointer-events-none">
+            {/* Top Bar - Floating Actions */}
+            <div className="absolute top-5 inset-x-5 flex items-center justify-between z-20 pointer-events-none">
+              <div className="flex items-center gap-2 pointer-events-auto">
+                <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
+                <button 
+                  onClick={() => fileInputRef.current?.click()} 
+                  className="p-2.5 bg-black/60 rounded-full text-white hover:scale-110 transition-transform shadow-xl"
+                  title="Upload Image"
+                >
+                  <ImageIcon size={18} />
+                </button>
+              </div>
+
+              {/* Centered Title */}
+              <div className="absolute left-1/2 -translate-x-1/2 flex items-center pointer-events-auto">
+                <h1 className="text-sm font-mono font-black text-neutral-900 uppercase tracking-[0.2em] leading-none whitespace-nowrap">
+                  Gradient Settings
+                </h1>
+              </div>
+
               <button 
                 onClick={() => setShowGlobalSettings(false)}
                 className="p-2.5 bg-black/60 rounded-full text-white hover:scale-110 transition-transform pointer-events-auto shadow-xl"
+                title="Close"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div className="h-full overflow-y-auto p-8 pt-7 pb-12">
-              <div className="flex items-center justify-between mb-8 pr-10">
-                <h1 className="text-sm font-mono font-black text-neutral-900 uppercase tracking-[0.2em] leading-none">
-                  Gradient Settings
-                </h1>
-              </div>
-
+            <div className="h-full overflow-y-auto p-8 pt-24 pb-12">
               <div className="space-y-10">
                 <section className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h2 className="text-[10px] font-mono font-black text-neutral-400 uppercase tracking-[0.2em]">Gradient Engine</h2>
-                    <div className="flex items-center gap-2">
-                      <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
-                      <button onClick={() => fileInputRef.current?.click()} className="p-2 text-neutral-400 hover:text-black transition-colors">
-                        <ImageIcon size={20} />
-                      </button>
-                    </div>
                   </div>
-                  <div className="bg-neutral-100 p-1 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-1">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {[
                       { id: 'linear', icon: Slash, label: 'Linear' },
                       { id: 'radial', icon: Circle, label: 'Radial' },
@@ -1144,8 +1253,10 @@ export default function App() {
                           pushToHistory(next);
                         }}
                         className={cn(
-                          "flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl transition-all",
-                          settings.type === type.id ? "bg-black shadow-md text-white" : "text-neutral-400 hover:text-neutral-600"
+                          "flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl transition-all border",
+                          settings.type === type.id 
+                            ? "bg-black text-white border-black shadow-lg scale-[1.02]" 
+                            : "bg-white text-neutral-400 border-neutral-200 hover:border-neutral-400"
                         )}
                       >
                         <type.icon size={14} strokeWidth={2.5} className="shrink-0" />
@@ -1333,93 +1444,138 @@ export default function App() {
 
             <div className="h-full overflow-y-auto p-8 pt-24 pb-12">
               {savedGradients.length > 0 ? (
-              <div className="columns-2 sm:columns-3 md:columns-4 gap-8">
-                {savedGradients.map((saved) => (
-                  <div 
-                    key={saved.id}
-                    className="break-inside-avoid mb-8 group relative flex flex-col bg-white rounded-xl overflow-hidden border border-neutral-200 shadow-sm"
-                  >
-                    <div className="relative w-full flex items-center justify-center bg-white p-4 shadow-inner">
-                      <button
-                        onClick={() => loadSavedGradient(saved.settings)}
-                        className="relative shadow-2xl transition-all hover:scale-105 active:scale-95 overflow-hidden border border-white/20 flex items-center justify-center"
-                        style={{ 
-                          aspectRatio: `${saved.settings.ratio?.width || 1} / ${saved.settings.ratio?.height || 1}`,
-                          maxWidth: '100%',
-                          width: '100%',
-                        }}
+                <>
+                  <div className="columns-2 sm:columns-3 md:columns-4 gap-8">
+                    {savedGradients.map((saved) => (
+                      <div 
+                        key={saved.id}
+                        className="break-inside-avoid mb-8 group relative flex flex-col bg-white rounded-xl overflow-hidden border border-neutral-200 shadow-sm"
                       >
-                        <MiniGradient 
-                          settings={saved.settings} 
-                          className="w-full h-full"
-                          width={200}
-                          height={200}
-                        />
-                      </button>
-                      
-                      {/* Delete Button - Top Left */}
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); deleteSavedGradient(saved.id); }}
-                        className="absolute top-4 left-4 p-2 bg-red-500 text-white rounded-full opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shadow-lg z-10"
-                        title="Delete"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                        {/* Top Bar - Actions */}
+                        <div className="flex items-center justify-between p-4 bg-white">
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              deleteSavedGradient(saved.id); 
+                              setHasInteracted(true);
+                            }}
+                            className="p-2 bg-red-500 text-white rounded-full shadow-lg transition-transform active:scale-90"
+                            title="Delete"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              setExportSettings(saved.settings);
+                              setConfirmDpi(saved.settings.exportDpi || 300);
+                              setExportType('png');
+                              setShowExportConfirm(true);
+                              setHasInteracted(true);
+                            }}
+                            className="p-2 bg-black/60 text-white rounded-full shadow-lg transition-transform active:scale-90"
+                            title="Download"
+                          >
+                            <Download size={14} />
+                          </button>
+                        </div>
 
-                      {/* Download Button - Top Right */}
-                      <button 
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          setExportSettings(saved.settings);
-                          setConfirmDpi(saved.settings.exportDpi || 300);
-                          setExportType('png');
-                          setShowExportConfirm(true);
-                        }}
-                        className="absolute top-4 right-4 p-2 bg-black/60 text-white rounded-full opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shadow-lg z-10"
-                        title="Download"
-                      >
-                        <Download size={14} />
-                      </button>
-                    </div>
-                    
-                    <div className="p-4 space-y-1">
-                      <input
-                        type="text"
-                        value={saved.name}
-                        onChange={(e) => renameSavedGradient(saved.id, e.target.value)}
-                        className="w-full bg-transparent text-[10px] font-mono font-bold text-neutral-900 uppercase tracking-tight outline-none border-b border-transparent focus:border-neutral-300 transition-colors"
-                      />
-                      <div className="flex items-center justify-between text-[8px] font-mono text-neutral-400 uppercase tracking-widest">
-                        <span>{saved.settings.type}</span>
-                        <span>{saved.settings.ratio?.width || 1}:{saved.settings.ratio?.height || 1}</span>
+                        <div className="relative w-full flex items-center justify-center bg-white p-4 pt-0">
+                          <button
+                            onClick={() => {
+                              loadSavedGradient(saved.settings);
+                              setHasInteracted(true);
+                            }}
+                            className="relative shadow-2xl transition-all hover:scale-105 active:scale-95 overflow-hidden border border-white/20 flex items-center justify-center"
+                            style={{ 
+                              aspectRatio: `${saved.settings.ratio?.width || 1} / ${saved.settings.ratio?.height || 1}`,
+                              maxWidth: '100%',
+                              maxHeight: '240px',
+                              width: '100%',
+                            }}
+                          >
+                            <MiniGradient 
+                              settings={saved.settings} 
+                              className="w-full h-full"
+                              width={200}
+                              height={200}
+                            />
+                          </button>
+                        </div>
+                        
+                        <div className="p-4 space-y-1">
+                          <input
+                            type="text"
+                            value={saved.name}
+                            onChange={(e) => {
+                              renameSavedGradient(saved.id, e.target.value);
+                              setHasInteracted(true);
+                            }}
+                            className="w-full bg-transparent text-[10px] font-mono font-bold text-neutral-900 uppercase tracking-tight outline-none border-b border-transparent focus:border-neutral-300 transition-colors"
+                          />
+                          <div className="flex items-center justify-between text-[8px] font-mono text-neutral-400 uppercase tracking-widest">
+                            <span>{saved.settings.type}</span>
+                            <span>{saved.settings.ratio?.width || 1}:{saved.settings.ratio?.height || 1}</span>
+                          </div>
+                        </div>
                       </div>
+                    ))}
+                  </div>
+
+                  {/* Embedded Bulk Actions */}
+                  <div className="mt-12 mb-8 flex flex-col items-center justify-center space-y-4 border-t border-neutral-100 pt-12">
+                    <p className="text-[10px] font-mono font-bold text-neutral-400 uppercase tracking-[0.2em]">Library Management</p>
+                    <div className="flex items-center gap-3">
+                      <button 
+                        onClick={() => bulkImportInputRef.current?.click()}
+                        className="flex items-center gap-3 px-6 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-600 rounded-full transition-all active:scale-95 group"
+                      >
+                        <FileUp size={18} className="group-hover:-translate-y-0.5 transition-transform" />
+                        <span className="text-[10px] font-mono font-black uppercase tracking-widest">Import Library</span>
+                      </button>
+                      <button 
+                        onClick={exportLibrary}
+                        className="flex items-center gap-3 px-6 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-600 rounded-full transition-all active:scale-95 group"
+                      >
+                        <FileDown size={18} className="group-hover:translate-y-0.5 transition-transform" />
+                        <span className="text-[10px] font-mono font-black uppercase tracking-widest">Export Library</span>
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="py-20 flex flex-col items-center justify-center text-neutral-300 border-2 border-dashed border-neutral-200 rounded-[40px]">
-                <History size={48} className="mb-4 opacity-20" />
-                <p className="text-xs font-mono uppercase tracking-widest">Library is empty</p>
+                </>
+              ) : (
+              <div className="py-20 flex flex-col items-center justify-center text-neutral-300 border-2 border-dashed border-neutral-200 rounded-[40px] space-y-6">
+                <div className="flex flex-col items-center">
+                  <History size={48} className="mb-4 opacity-20" />
+                  <p className="text-xs font-mono uppercase tracking-widest">Library is empty</p>
+                </div>
+                
+                <button 
+                  onClick={() => bulkImportInputRef.current?.click()}
+                  className="flex items-center gap-3 px-6 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-600 rounded-full transition-all active:scale-95 group"
+                >
+                  <FileUp size={18} className="group-hover:-translate-y-0.5 transition-transform" />
+                  <span className="text-[10px] font-mono font-black uppercase tracking-widest">Import Library</span>
+                </button>
               </div>
             )}
-          </div>
-        </motion.div>
-      )}
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* Save Success Toast */}
       <AnimatePresence>
-        {(showSaveToast || showCopyToast) && (
+        {showSaveToast && (
           <motion.div
             initial={{ opacity: 0, y: 20, x: '-50%' }}
             animate={{ opacity: 1, y: 0, x: '-50%' }}
             exit={{ opacity: 0, y: -20, x: '-50%' }}
             className="absolute top-24 left-1/2 z-[100] bg-emerald-500 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 border border-white/20"
           >
-            {showSaveToast ? <BookmarkCheck size={20} /> : <Copy size={20} />}
+            <BookmarkCheck size={20} />
             <span className="text-[10px] font-mono font-bold uppercase tracking-widest">
-              {showSaveToast ? 'Saved to Library' : 'Hex Codes Copied'}
+              Saved to Library
             </span>
           </motion.div>
         )}
@@ -1438,7 +1594,10 @@ export default function App() {
             <div className="flex items-center justify-between mb-8">
               <h2 className="text-2xl font-mono font-black tracking-tighter uppercase">PHOTO SOURCE</h2>
               <button 
-                onClick={() => setUploadedImageUrl(null)} 
+                onClick={() => {
+                  setUploadedImageUrl(null);
+                  setHasInteracted(true);
+                }} 
                 className="p-2 bg-black/60 rounded-full text-white hover:scale-110 transition-transform shadow-xl"
               >
                 <X size={20} />
@@ -1466,10 +1625,11 @@ export default function App() {
           >
             <motion.div
               ref={popupRef}
+              layout
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-            className="bg-white/70 backdrop-blur-xl rounded-[40px] p-8 w-full max-w-[400px] shadow-2xl border border-white/40"
+              className="bg-white/70 backdrop-blur-xl rounded-[40px] p-8 w-full max-w-[400px] shadow-2xl border border-white/40"
             >
               <div className="flex justify-between items-center mb-6">
                 <div>
@@ -1479,8 +1639,9 @@ export default function App() {
                   onClick={() => {
                     setShowExportConfirm(false);
                     setExportSettings(null);
+                    setHasInteracted(true);
                   }}
-                  className="p-2 bg-black/60 rounded-2xl text-white hover:scale-110 transition-transform"
+                  className="p-2 bg-black/60 rounded-full text-white hover:scale-110 transition-transform"
                 >
                   <X size={20} />
                 </button>
@@ -1493,11 +1654,25 @@ export default function App() {
                     <span className="text-[10px] font-black text-neutral-900">{activeSettings.ratio.width}:{activeSettings.ratio.height}</span>
                   </div>
                   <button 
-                    onClick={copyBulkHex}
-                    className="flex items-center gap-2 bg-neutral-100 px-3 py-1 rounded-2xl border border-neutral-200 hover:bg-neutral-200 transition-colors"
+                    onClick={() => {
+                      copyBulkHex();
+                      setHasInteracted(true);
+                    }}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-1 rounded-2xl border transition-all",
+                      showCopyToast 
+                        ? "bg-emerald-500 border-emerald-600 text-white" 
+                        : "bg-neutral-100 border-neutral-200 hover:bg-neutral-200 text-neutral-900"
+                    )}
                   >
-                    <Copy size={10} className="text-neutral-400" />
-                    <span className="text-[10px] font-black text-neutral-900 uppercase tracking-widest">Copy Hex</span>
+                    {showCopyToast ? (
+                      <BookmarkCheck size={10} className="text-white" />
+                    ) : (
+                      <Copy size={10} className="text-neutral-400" />
+                    )}
+                    <span className="text-[10px] font-black uppercase tracking-widest">
+                      {showCopyToast ? 'Copied!' : 'Copy Hex'}
+                    </span>
                   </button>
                 </div>
 
@@ -1520,7 +1695,10 @@ export default function App() {
                     ].map((type) => (
                       <button
                         key={type.id}
-                        onClick={() => setExportType(type.id as any)}
+                        onClick={() => {
+                          setExportType(type.id as any);
+                          setHasInteracted(true);
+                        }}
                         className={cn(
                           "flex flex-col items-center justify-center gap-1.5 h-[68px] rounded-2xl border transition-all",
                           exportType === type.id 
@@ -1534,35 +1712,65 @@ export default function App() {
                     ))}
                   </div>
 
-                  {exportType === 'svg' && (activeSettings.type === 'mesh' || activeSettings.type === 'conic') && (
-                    <p className="text-[10px] text-black font-black px-2 leading-relaxed uppercase tracking-tight">
-                      Gradient turned to vector shapes to preserve design. Gradient uneditable in other programs.
-                    </p>
-                  )}
-                  {exportType === 'svg' && (activeSettings.type === 'linear' || activeSettings.type === 'radial') && (
-                    <p className="text-[10px] text-black font-black px-2 leading-relaxed uppercase tracking-tight">
-                      Gradient editable it other programs, like Illustrator.
-                    </p>
-                  )}
-                  {exportType === 'json' && (
-                    <p className="text-[10px] text-black font-black px-2 leading-relaxed uppercase tracking-tight">
-                      Gradients!!! App-specific format so you can re-uploaded into this app later to rework.
-                    </p>
-                  )}
+                  <motion.div
+                    initial={false}
+                    animate={{ 
+                      height: exportType === 'png' ? 0 : 'auto',
+                      opacity: exportType === 'png' ? 0 : 1,
+                      marginBottom: exportType === 'png' ? 0 : 16
+                    }}
+                    transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="py-2 flex items-center justify-center min-h-[48px]">
+                      <AnimatePresence mode="wait">
+                        {exportType === 'svg' && (
+                          <motion.p
+                            key="svg"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="text-[10px] text-black font-black px-2 leading-relaxed uppercase tracking-tight text-center"
+                          >
+                            {(activeSettings.type === 'mesh' || activeSettings.type === 'conic') 
+                              ? "Gradient turned to vector shapes to preserve design. Gradient uneditable in other programs."
+                              : "Gradient editable it other programs, like Illustrator."}
+                          </motion.p>
+                        )}
+                        {exportType === 'json' && (
+                          <motion.p
+                            key="json"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="text-[10px] text-black font-black px-2 leading-relaxed uppercase tracking-tight text-center"
+                          >
+                            Gradients!!! App-specific format so you can re-uploaded into this app later to rework.
+                          </motion.p>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </motion.div>
 
                   <div className="px-4 glass rounded-2xl border border-white/20 h-[68px] flex flex-col justify-center">
                     <span className="text-[10px] font-black text-neutral-400 uppercase block mb-0.5">Export DPI</span>
                     <input
                       type="number" 
                       value={confirmDpi}
-                      onChange={(e) => setConfirmDpi(parseInt(e.target.value) || 72)}
+                      onChange={(e) => {
+                        setConfirmDpi(parseInt(e.target.value) || 72);
+                        setHasInteracted(true);
+                      }}
                       className="w-full bg-transparent text-xl font-black outline-none text-neutral-900"
                     />
                   </div>
                 </div>
 
                 <button
-                  onClick={() => executeExport(confirmDpi)}
+                  onClick={() => {
+                    executeExport(confirmDpi);
+                    setHasInteracted(true);
+                  }}
                   className="w-full py-4 text-white rounded-2xl font-black uppercase tracking-[0.2em] text-sm shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
                   style={{
                     backgroundImage: `url(${currentGradientDataUrl})`,
@@ -1572,8 +1780,54 @@ export default function App() {
                   }}
                 >
                   <Download size={20} style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }} />
-                  {exportType === 'json' ? 'download gdnt' : `Save as ${exportType.toUpperCase()}`}
+                  {exportType === 'json' ? 'SAVE AS GDNT' : `Save as ${exportType.toUpperCase()}`}
                 </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* Bulk Progress Popup */}
+      <AnimatePresence>
+        {(isBulkExporting || isBulkImporting) && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-[40px] p-10 w-full max-w-[400px] shadow-2xl border border-white/40 text-center space-y-8"
+            >
+              <div className="flex justify-center">
+                <div className="w-20 h-20 bg-neutral-100 rounded-full flex items-center justify-center">
+                  {isBulkExporting ? <FileDown size={32} className="text-black" /> : <FileUp size={32} className="text-black" />}
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <h2 className="text-xl font-mono font-black text-black uppercase tracking-widest">
+                  {isBulkExporting ? 'Exporting Library' : 'Importing Library'}
+                </h2>
+                <p className="text-[10px] font-mono font-bold text-neutral-400 uppercase tracking-widest">
+                  {isBulkExporting ? 'Preparing your collection...' : 'Populating your library...'}
+                </p>
+              </div>
+
+              <div className="relative h-2 bg-neutral-100 rounded-full overflow-hidden">
+                <motion.div 
+                  className="absolute inset-y-0 left-0 bg-black"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${bulkProgress}%` }}
+                  transition={{ type: 'spring', damping: 20, stiffness: 100 }}
+                />
+              </div>
+
+              <div className="text-[10px] font-mono font-black text-black uppercase tracking-[0.2em]">
+                {Math.round(bulkProgress)}%
               </div>
             </motion.div>
           </motion.div>

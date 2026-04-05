@@ -39,7 +39,6 @@ export const MiniGradient: React.FC<MiniGradientProps> = ({
     <canvas 
       ref={canvasRef} 
       className={className}
-      style={{ width, height }}
     />
   );
 };
