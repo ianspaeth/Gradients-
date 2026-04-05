@@ -1417,6 +1417,13 @@ export default function App() {
             <div className="absolute top-5 inset-x-5 flex items-center justify-between z-20 pointer-events-none">
               <div className="flex items-center gap-2 pointer-events-auto">
                 <input type="file" id="gdnt-upload" className="hidden" accept=".gdnt,.json" onChange={handleGdntUpload} />
+                <input 
+                  type="file" 
+                  ref={bulkImportInputRef} 
+                  onChange={handleBulkImport} 
+                  accept=".json" 
+                  className="hidden" 
+                />
                 <label 
                   htmlFor="gdnt-upload"
                   className="p-2.5 bg-black/60 rounded-full text-white hover:scale-110 transition-transform cursor-pointer shadow-xl"
