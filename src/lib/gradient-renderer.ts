@@ -178,7 +178,7 @@ export const drawGradientToCanvas = (
       // Intensity scaling: 
       // We use a more refined intensity mapping for professional-grade grain.
       // The noise is applied as a delta to the existing color values.
-      const intensity = (settings.noise / 100) * 36.16; 
+      const intensity = (settings.noise / 100) * 39.78; 
       
       for (let i = 0; i < data.length; i += 4) {
         // Monochromatic noise base for consistent visual weight

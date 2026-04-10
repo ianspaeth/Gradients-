@@ -1281,8 +1281,8 @@ export default function App() {
                       setSettings(next);
                     }}
                     onMouseUp={() => pushToHistory(settings)}
-                    className="w-full h-2 bg-neutral-200 rounded-full appearance-none cursor-pointer"
-                    style={{ accentColor: '#000' }}
+                    className="range-lg w-full"
+                    style={{ '--range-thumb-color': '#000' } as React.CSSProperties}
                   />
                 </section>
 
