@@ -5,7 +5,7 @@ import { GradientPreview, GradientPreviewHandle } from './components/GradientPre
 import { MiniGradient } from './components/MiniGradient';
 import { useGradientDataUrl } from './hooks/useGradientDataUrl';
 import { ImageColorPicker } from './components/ImageColorPicker';
-import { GradientSettings, ColorStop, MeshPoint } from './types';
+import { GradientSettings, ColorStop, MeshPoint, GradientType } from './types';
 import { cn } from './lib/utils';
 import { extractColorsFromImage } from './lib/imageUtils';
 import { drawVectorToPdf } from './lib/gradient-renderer';
@@ -13,7 +13,8 @@ import { jsPDF } from 'jspdf';
 
 const INITIAL_STOPS: ColorStop[] = [
   { id: '1', color: '#6366f1', position: 0, midpoint: 50, x: 20, y: 20 },
-  { id: '2', color: '#a855f7', position: 100, midpoint: 50, x: 80, y: 80 },
+  { id: '2', color: '#a855f7', position: 50, midpoint: 50, x: 50, y: 50 },
+  { id: '3', color: '#ec4899', position: 100, midpoint: 50, x: 80, y: 80 },
 ];
 
 const INITIAL_MESH_POINTS: MeshPoint[] = [
@@ -92,15 +93,21 @@ const generateRandomColor = () => {
 };
 
 const generateRandomSettings = (): GradientSettings => {
-  const type = 'mesh';
+  const savedType = typeof window !== 'undefined' ? localStorage.getItem('studio-engine') : null;
+  const savedRatio = typeof window !== 'undefined' ? localStorage.getItem('studio-ratio') : null;
+  
+  const type = (savedType as GradientType) || 'conic';
+  const ratio = savedRatio ? JSON.parse(savedRatio) : { width: 9, height: 19.5 };
+
   const stops: ColorStop[] = [
     { id: '1', color: generateRandomColor(), position: 0, midpoint: 50, x: 20, y: 20 },
-    { id: '2', color: generateRandomColor(), position: 100, midpoint: 50, x: 80, y: 80 },
+    { id: '2', color: generateRandomColor(), position: 50, midpoint: 50, x: 50, y: 50 },
+    { id: '3', color: generateRandomColor(), position: 100, midpoint: 50, x: 80, y: 80 },
   ];
   const meshPoints: MeshPoint[] = [
-    { id: 'm1', color: generateRandomColor(), x: 20, y: 20, radius: 60 },
-    { id: 'm2', color: generateRandomColor(), x: 80, y: 80, radius: 60 },
-    { id: 'm3', color: generateRandomColor(), x: 50, y: 50, radius: 40 },
+    { id: 'm1', color: generateRandomColor(), x: 20, y: 20, radius: 100 },
+    { id: 'm2', color: generateRandomColor(), x: 80, y: 80, radius: 100 },
+    { id: 'm3', color: generateRandomColor(), x: 50, y: 50, radius: 100 },
   ];
   
   return {
@@ -110,7 +117,7 @@ const generateRandomSettings = (): GradientSettings => {
     meshPoints,
     backgroundColor: '#ffffff',
     noise: 0,
-    ratio: { width: 1, height: 1 },
+    ratio,
     exportDpi: 300,
     controlPoints: {
       start: { x: 20, y: 20 },
@@ -238,6 +245,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('studio-colors', JSON.stringify(colorHistory));
   }, [colorHistory]);
+
+  // Persist engine and ratio
+  useEffect(() => {
+    localStorage.setItem('studio-engine', settings.type);
+  }, [settings.type]);
+
+  useEffect(() => {
+    localStorage.setItem('studio-ratio', JSON.stringify(settings.ratio));
+  }, [settings.ratio]);
 
   const addToColorHistory = (color: string) => {
     setColorHistory(prev => {
@@ -442,11 +458,11 @@ export default function App() {
     const next = {
       ...settings,
       meshPoints: [...settings.meshPoints, { 
-        id: newId, 
-        color, 
-        x: x ?? (Math.random() * 100), 
-        y: y ?? (Math.random() * 100), 
-        radius: 50 
+      id: newId, 
+      color, 
+      x: x ?? (Math.random() * 100), 
+      y: y ?? (Math.random() * 100), 
+      radius: 100 
       }],
     };
     setSettings(next);
@@ -1292,8 +1308,8 @@ export default function App() {
                     {[
                       { label: '1:1', w: 1, h: 1 },
                       { label: '4:5', w: 4, h: 5 },
-                      { label: '16:9', w: 16, h: 9 },
                       { label: '9:16', w: 9, h: 16 },
+                      { label: '9:19.5', w: 9, h: 19.5 },
                     ].map((r) => (
                       <button
                         key={r.label}
@@ -1363,8 +1379,8 @@ export default function App() {
 
                 <section className="space-y-4">
                   <h2 className="text-[10px] font-mono font-black text-neutral-400 uppercase tracking-[0.2em]">Export Quality (DPI)</h2>
-                  <div className="grid grid-cols-4 gap-2">
-                    {[72, 150, 300, 600].map((dpi) => (
+                  <div className="grid grid-cols-3 gap-2">
+                    {[150, 300, 600].map((dpi) => (
                       <button
                         key={dpi}
                         onClick={() => {
@@ -1388,7 +1404,7 @@ export default function App() {
                     <input
                       type="number" value={settings.exportDpi}
                       onChange={(e) => {
-                        const next = { ...settings, exportDpi: parseInt(e.target.value) || 72 };
+                        const next = { ...settings, exportDpi: parseInt(e.target.value) || 300 };
                         setSettings(next);
                       }}
                       onBlur={() => pushToHistory(settings)}
@@ -1765,7 +1781,7 @@ export default function App() {
                       type="number" 
                       value={confirmDpi}
                       onChange={(e) => {
-                        setConfirmDpi(parseInt(e.target.value) || 72);
+                        setConfirmDpi(parseInt(e.target.value) || 300);
                         setHasInteracted(true);
                       }}
                       className="w-full bg-transparent text-xl font-black outline-none text-neutral-900"

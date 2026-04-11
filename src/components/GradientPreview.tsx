@@ -494,17 +494,6 @@ export const GradientPreview = forwardRef<GradientPreviewHandle, GradientPreview
             </>
           )
         )}
-
-        {!draggingNode && !selectedNode && !hideTooltip && !hideNodes && (
-          <div className="absolute top-12 left-1/2 -translate-x-1/2 glass-dark px-6 py-4 rounded-[32px] text-[10px] font-mono font-bold text-white/70 flex flex-col items-center gap-2 pointer-events-none shadow-2xl border border-white/10 text-center backdrop-blur-xl">
-            <div className="flex items-center gap-2">
-              <span>Tap canvas to add node.</span>
-            </div>
-            <div className="flex items-center gap-2 opacity-60">
-              <span>Tap app title to generate random colorway.</span>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

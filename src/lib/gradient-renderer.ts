@@ -54,9 +54,22 @@ export const drawGradientToCanvas = (
         x: (p.x / 100) * bw, 
         y: (p.y / 100) * bh,
         r: rgb.r, g: rgb.g, b: rgb.b,
-        weight: p.radius / 50
+        hex: p.color,
+        // Increased base weight for more continuous coverage
+        weight: p.radius / 8
       };
     });
+
+    // Group points by color for cohesion logic
+    const colorGroups = new Map<string, any[]>();
+    points.forEach(p => {
+      if (!colorGroups.has(p.hex)) colorGroups.set(p.hex, []);
+      colorGroups.get(p.hex)!.push(p);
+    });
+
+    // Adaptive exponent based on node density
+    // Lower exponent = more expansive reach and better mixing
+    const exponent = Math.max(0.4, Math.min(1.0, 0.45 + (points.length * 0.012)));
 
     for (let y = 0; y < bh; y++) {
       for (let x = 0; x < bw; x++) {
@@ -67,27 +80,51 @@ export const drawGradientToCanvas = (
         const centerX = x + 0.5;
         const centerY = y + 0.5;
 
-        for (const p of points) {
-          const dx = centerX - p.x; 
-          const dy = centerY - p.y; 
-          const distSq = dx * dx + dy * dy;
-          
-          // Singularity check with a small epsilon
-          if (distSq < 0.01) { 
-            r = p.r; g = p.g; b = p.b; 
-            totalWeight = 1; 
-            break; 
+        // Color Cohesion Logic: Group weights by color to ensure "full color" between same-colored nodes
+        for (const [hex, groupPoints] of colorGroups) {
+          let groupSumW = 0;
+          let groupMaxW = 0;
+          let isSingularity = false;
+
+          for (const p of groupPoints) {
+            const dx = centerX - p.x; 
+            const dy = centerY - p.y; 
+            const distSq = dx * dx + dy * dy;
+            
+            if (distSq < 0.01) { 
+              isSingularity = true;
+              break; 
+            }
+            
+            // Softer IDW formula with adaptive exponent and larger softening constant (25)
+            // This creates much broader, more continuous "blobs" of color
+            const w = p.weight / Math.pow(distSq + 25, exponent); 
+            groupSumW += w;
+            if (w > groupMaxW) groupMaxW = w;
           }
-          
-          const w = p.weight / Math.pow(distSq, 1.1); // Slightly softer falloff for smoother blending
-          r += p.r * w; 
-          g += p.g * w; 
-          b += p.b * w; 
-          totalWeight += w;
+
+          if (isSingularity) {
+            const rgb = parseColor(hex);
+            r = rgb.r; g = rgb.g; b = rgb.b;
+            totalWeight = 1;
+            break;
+          }
+
+          // Bridge Boost: If multiple nodes of same color overlap, boost the weight in the "bridge" area
+          // This ensures no falloff between same-colored nodes
+          const bridgeFactor = groupMaxW > 0 ? groupSumW / groupMaxW : 1;
+          const boost = 1 + (bridgeFactor - 1) * 0.65;
+          const effectiveWeight = groupSumW * boost;
+
+          const rgb = parseColor(hex);
+          r += rgb.r * effectiveWeight;
+          g += rgb.g * effectiveWeight;
+          b += rgb.b * effectiveWeight;
+          totalWeight += effectiveWeight;
         }
         
         const idx = (y * bw + x) * 4;
-        const invWeight = 1 / totalWeight;
+        const invWeight = 1 / Math.max(0.0001, totalWeight);
         data[idx] = r * invWeight; 
         data[idx + 1] = g * invWeight; 
         data[idx + 2] = b * invWeight; 
@@ -214,16 +251,55 @@ export const generateVectorSvg = (width: number, height: number, settings: any, 
   const calculateMeshColor = (x: number, y: number, points: any[]) => {
     let totalWeight = 0;
     let r = 0, g = 0, b = 0;
-    for (const p of points) {
-      const dx = x - p.x;
-      const dy = y - p.y;
-      const distSq = dx * dx + dy * dy;
-      if (distSq < 0.01) return { r: p.r, g: p.g, b: p.b };
-      const w = p.weight / Math.pow(distSq, 1.1);
-      r += p.r * w; g += p.g * w; b += p.b * w;
-      totalWeight += w;
+    
+    // Group points by color for cohesion logic
+    const colorGroups = new Map<string, any[]>();
+    points.forEach(p => {
+      if (!colorGroups.has(p.hex)) colorGroups.set(p.hex, []);
+      colorGroups.get(p.hex)!.push(p);
+    });
+
+    // Adaptive exponent matching the main renderer
+    const exponent = Math.max(0.4, Math.min(1.0, 0.45 + (points.length * 0.012)));
+
+    for (const [hex, groupPoints] of colorGroups) {
+      let groupSumW = 0;
+      let groupMaxW = 0;
+      let isSingularity = false;
+
+      for (const p of groupPoints) {
+        const dx = x - p.x;
+        const dy = y - p.y;
+        const distSq = dx * dx + dy * dy;
+        
+        if (distSq < 0.01) {
+          isSingularity = true;
+          break;
+        }
+        
+        // Matching softer IDW formula with larger softening constant (25)
+        const w = p.weight / Math.pow(distSq + 25, exponent);
+        groupSumW += w;
+        if (w > groupMaxW) groupMaxW = w;
+      }
+
+      if (isSingularity) {
+        const rgb = parseColor(hex);
+        return { r: rgb.r, g: rgb.g, b: rgb.b };
+      }
+
+      // Matching Bridge Boost logic
+      const bridgeFactor = groupMaxW > 0 ? groupSumW / groupMaxW : 1;
+      const boost = 1 + (bridgeFactor - 1) * 0.65;
+      const effectiveWeight = groupSumW * boost;
+
+      const rgb = parseColor(hex);
+      r += rgb.r * effectiveWeight;
+      g += rgb.g * effectiveWeight;
+      b += rgb.b * effectiveWeight;
+      totalWeight += effectiveWeight;
     }
-    const invWeight = 1 / totalWeight;
+    const invWeight = 1 / Math.max(0.0001, totalWeight);
     return { r: Math.round(r * invWeight), g: Math.round(g * invWeight), b: Math.round(b * invWeight) };
   };
 
@@ -285,7 +361,7 @@ export const generateVectorSvg = (width: number, height: number, settings: any, 
         x: (p.x / 100) * width,
         y: (p.y / 100) * height,
         r: rgb.r, g: rgb.g, b: rgb.b,
-        weight: p.radius / 50
+        weight: p.radius / 8
       };
     });
 
@@ -477,9 +553,19 @@ export const drawVectorToPdf = (pdf: any, width: number, height: number, setting
         x: (p.x / 100) * width,
         y: (p.y / 100) * height,
         r: rgb.r, g: rgb.g, b: rgb.b,
-        weight: p.radius / 50
+        hex: p.color,
+        weight: p.radius / 8
       };
     });
+
+    // Group points by color for cohesion logic
+    const colorGroups = new Map<string, any[]>();
+    points.forEach(p => {
+      if (!colorGroups.has(p.hex)) colorGroups.set(p.hex, []);
+      colorGroups.get(p.hex)!.push(p);
+    });
+
+    const exponent = Math.max(0.4, Math.min(1.0, 0.45 + (points.length * 0.012)));
 
     for (let gy = 0; gy < gridSize; gy++) {
       for (let gx = 0; gx < gridSize; gx++) {
@@ -489,25 +575,45 @@ export const drawVectorToPdf = (pdf: any, width: number, height: number, setting
         let totalWeight = 0;
         let r = 0, g = 0, b = 0;
         
-        for (const p of points) {
-          const dx = x - p.x;
-          const dy = y - p.y;
-          const distSq = dx * dx + dy * dy;
-          
-          if (distSq < 0.01) {
-            r = p.r; g = p.g; b = p.b;
+        for (const [hex, groupPoints] of colorGroups) {
+          let groupSumW = 0;
+          let groupMaxW = 0;
+          let isSingularity = false;
+
+          for (const p of groupPoints) {
+            const dx = x - p.x;
+            const dy = y - p.y;
+            const distSq = dx * dx + dy * dy;
+            
+            if (distSq < 0.01) {
+              isSingularity = true;
+              break;
+            }
+            
+            const w = p.weight / Math.pow(distSq + 25, exponent);
+            groupSumW += w;
+            if (w > groupMaxW) groupMaxW = w;
+          }
+
+          if (isSingularity) {
+            const rgb = parseColor(hex);
+            r = rgb.r; g = rgb.g; b = rgb.b;
             totalWeight = 1;
             break;
           }
-          
-          const w = p.weight / Math.pow(distSq, 1.1);
-          r += p.r * w;
-          g += p.g * w;
-          b += p.b * w;
-          totalWeight += w;
+
+          const bridgeFactor = groupMaxW > 0 ? groupSumW / groupMaxW : 1;
+          const boost = 1 + (bridgeFactor - 1) * 0.65;
+          const effectiveWeight = groupSumW * boost;
+
+          const rgb = parseColor(hex);
+          r += rgb.r * effectiveWeight;
+          g += rgb.g * effectiveWeight;
+          b += rgb.b * effectiveWeight;
+          totalWeight += effectiveWeight;
         }
         
-        const invWeight = 1 / totalWeight;
+        const invWeight = 1 / Math.max(0.0001, totalWeight);
         const finalR = Math.round(r * invWeight);
         const finalG = Math.round(g * invWeight);
         const finalB = Math.round(b * invWeight);
