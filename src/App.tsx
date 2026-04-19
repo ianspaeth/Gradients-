@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, RotateCcw, Layers, Circle, Sparkles, Settings2, Image as ImageIcon, X, Download, Trash2, Bookmark, BookmarkCheck, History, Undo2, Redo2, Compass, ArrowLeftRight, Slash, Cone, FileJson, FileCode, FileType, Copy, Upload, FileDown, FileUp } from 'lucide-react';
+import { Plus, RotateCcw, Layers, Circle, Sparkles, Settings2, Image as ImageIcon, X, Download, Trash2, Bookmark, BookmarkCheck, History, Undo2, Redo2, Compass, ArrowLeftRight, Slash, Cone, FileJson, FileCode, FileType, Copy, Upload, FileDown, FileUp, Filter, ChevronDown, FilterX } from 'lucide-react';
 import { GradientPreview, GradientPreviewHandle } from './components/GradientPreview';
 import { MiniGradient } from './components/MiniGradient';
 import { useGradientDataUrl } from './hooks/useGradientDataUrl';
@@ -140,6 +140,8 @@ export default function App() {
   const [colorMode, setColorMode] = useState<'hex' | 'rgb' | 'hsb'>('hsb');
   const [isHolding, setIsHolding] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [pendingSaveName, setPendingSaveName] = useState("");
   const [showExportConfirm, setShowExportConfirm] = useState(false);
   const [exportSettings, setExportSettings] = useState<GradientSettings | null>(null);
   const activeSettings = exportSettings || settings;
@@ -150,6 +152,52 @@ export default function App() {
   const [exportType, setExportType] = useState<'png' | 'svg' | 'pdf' | 'json'>('png');
   const [showCopyToast, setShowCopyToast] = useState(false);
   const [savedGradients, setSavedGradients] = useState<{ id: string; name: string; settings: GradientSettings }[]>([]);
+  const [libraryFilters, setLibraryFilters] = useState<{
+    type: string | 'all';
+    ratio: string | 'all';
+    noise: string | 'all';
+  }>({
+    type: 'all',
+    ratio: 'all',
+    noise: 'all'
+  });
+  const [activeFilterDropdown, setActiveFilterDropdown] = useState<string | null>(null);
+
+  const libraryRatios = React.useMemo(() => {
+    const ratios = new Set<string>();
+    savedGradients.forEach(g => {
+      ratios.add(`${g.settings.ratio?.width || 1}:${g.settings.ratio?.height || 1}`);
+    });
+    return ['all', ...Array.from(ratios).sort()];
+  }, [savedGradients]);
+
+  const filteredGradients = React.useMemo(() => {
+    return savedGradients.filter(g => {
+      if (libraryFilters.type !== 'all' && g.settings.type !== libraryFilters.type) return false;
+      
+      if (libraryFilters.ratio !== 'all') {
+        const ratioStr = `${g.settings.ratio?.width || 1}:${g.settings.ratio?.height || 1}`;
+        if (ratioStr !== libraryFilters.ratio) return false;
+      }
+      
+      if (libraryFilters.noise !== 'all') {
+        const hasNoise = (g.settings.noise ?? 0) > 0;
+        if (libraryFilters.noise === 'none' && hasNoise) return false;
+        if (libraryFilters.noise === 'noise' && !hasNoise) return false;
+      }
+      
+      return true;
+    });
+  }, [savedGradients, libraryFilters]);
+
+  const clearFilters = () => {
+    setLibraryFilters({
+      type: 'all',
+      ratio: 'all',
+      noise: 'all'
+    });
+    setActiveFilterDropdown(null);
+  };
   const [isBulkExporting, setIsBulkExporting] = useState(false);
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
@@ -168,6 +216,7 @@ export default function App() {
     setShowGlobalSettings(false);
     setShowLibrary(false);
     setShowExportConfirm(false);
+    setShowSaveDialog(false);
     setUploadedImageUrl(null);
     setHasInteracted(true);
   };
@@ -264,15 +313,23 @@ export default function App() {
   };
 
   const saveCurrentGradient = () => {
-    const id = Math.random().toString(36).substr(2, 9);
     const now = new Date();
     const day = now.getDate().toString().padStart(2, '0');
     const month = now.toLocaleString('en-GB', { month: 'short' });
     const year = now.getFullYear();
     const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
-    const name = `${day} ${month} ${year}, ${time}`;
+    const defaultName = `${day} ${month} ${year}, ${time}`;
+    
+    setPendingSaveName(defaultName);
+    setShowSaveDialog(true);
+  };
+
+  const confirmSaveGradient = () => {
+    const id = Math.random().toString(36).substr(2, 9);
+    const name = pendingSaveName.trim() || "Untitled Gradient";
     
     setSavedGradients(prev => [...prev, { id, name, settings: JSON.parse(JSON.stringify(settings)) }]);
+    setShowSaveDialog(false);
     setShowSaveToast(true);
     setTimeout(() => setShowSaveToast(false), 2000);
   };
@@ -698,7 +755,7 @@ export default function App() {
       const blob = new Blob([jsonString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.download = getExportFilename('gdnt');
+      link.download = getExportFilename('json');
       link.href = url;
       link.click();
       URL.revokeObjectURL(url);
@@ -745,7 +802,7 @@ export default function App() {
           setShowLibrary(true); // Keep library open
         }
       } catch (err) {
-        console.error('Failed to parse .gdnt file', err);
+        console.error('Failed to parse JSON file', err);
       }
     };
     reader.readAsText(file);
@@ -843,7 +900,7 @@ export default function App() {
             }}
             onHoldChange={setIsHolding}
             selectedNode={selectedNode}
-            isOverlayOpen={showGlobalSettings || showLibrary || showExportConfirm || !!uploadedImageUrl}
+            isOverlayOpen={showGlobalSettings || showLibrary || showExportConfirm || showSaveDialog || !!uploadedImageUrl}
             hideTooltip={hasInteracted}
             hideNodes={isHolding}
             className="w-full h-full"
@@ -946,7 +1003,7 @@ export default function App() {
 
       {/* Backdrop for overlays */}
       <AnimatePresence>
-        {(showGlobalSettings || showLibrary || showExportConfirm || uploadedImageUrl) && (
+        {(showGlobalSettings || showLibrary || showExportConfirm || showSaveDialog || uploadedImageUrl) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -954,6 +1011,70 @@ export default function App() {
             onClick={closeAllOverlays}
             className="fixed inset-0 z-[90] bg-transparent"
           />
+        )}
+      </AnimatePresence>
+
+      {/* Save Naming Dialog */}
+      <AnimatePresence>
+        {showSaveDialog && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[110] bg-black/60 flex items-center justify-center p-8"
+          >
+            <motion.div
+              ref={popupRef}
+              layout
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white/70 backdrop-blur-xl rounded-[40px] p-8 w-full max-w-[400px] shadow-2xl border border-white/40"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h1 className="text-sm font-mono font-black text-neutral-900 uppercase tracking-[0.2em] leading-none whitespace-nowrap">Save Gradient</h1>
+                </div>
+                <button 
+                  onClick={() => setShowSaveDialog(false)}
+                  className="p-2 bg-black/60 rounded-full text-white hover:scale-110 transition-transform"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="p-5 bg-white/50 rounded-[32px] border border-neutral-200">
+                  <span className="text-[10px] font-black text-neutral-400 uppercase block mb-1">Name</span>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={pendingSaveName}
+                    onChange={(e) => setPendingSaveName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') confirmSaveGradient();
+                    }}
+                    className="w-full bg-transparent text-xl font-black outline-none placeholder:text-neutral-300"
+                    placeholder="Enter gradient name..."
+                  />
+                </div>
+
+                <button
+                  onClick={confirmSaveGradient}
+                  className="w-full py-4 text-white rounded-2xl font-black uppercase tracking-[0.2em] text-sm shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
+                  style={{
+                    backgroundImage: `url(${currentGradientDataUrl})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    textShadow: '0 2px 4px rgba(0,0,0,0.3)'
+                  }}
+                >
+                  <BookmarkCheck size={20} style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }} />
+                  Save to Library
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -1252,7 +1373,7 @@ export default function App() {
               <div className="space-y-10">
                 <section className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-[10px] font-mono font-black text-neutral-400 uppercase tracking-[0.2em]">Gradient Engine</h2>
+                    <h2 className="text-[10px] font-mono font-black text-black uppercase tracking-[0.2em]">Gradient Engine</h2>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {[
@@ -1283,7 +1404,7 @@ export default function App() {
                 </section>
 
                 <section className="space-y-4">
-                  <div className="flex justify-between text-[10px] font-mono font-black text-neutral-400 uppercase tracking-[0.2em]">
+                  <div className="flex justify-between text-[10px] font-mono font-black text-black uppercase tracking-[0.2em]">
                     <span>Texture Noise</span>
                     <span className="text-black">{settings.noise}%</span>
                   </div>
@@ -1303,13 +1424,13 @@ export default function App() {
                 </section>
 
                 <section className="space-y-4">
-                  <h2 className="text-[10px] font-mono font-black text-neutral-400 uppercase tracking-[0.2em]">Canvas Ratio</h2>
+                  <h2 className="text-[10px] font-mono font-black text-black uppercase tracking-[0.2em]">Canvas Ratio</h2>
                   <div className="grid grid-cols-4 gap-2">
                     {[
                       { label: '1:1', w: 1, h: 1 },
                       { label: '4:5', w: 4, h: 5 },
                       { label: '9:16', w: 9, h: 16 },
-                      { label: '9:19.5', w: 9, h: 19.5 },
+                      { label: 'iPhone', w: 9, h: 19.5 },
                     ].map((r) => (
                       <button
                         key={r.label}
@@ -1378,7 +1499,7 @@ export default function App() {
                 </section>
 
                 <section className="space-y-4">
-                  <h2 className="text-[10px] font-mono font-black text-neutral-400 uppercase tracking-[0.2em]">Export Quality (DPI)</h2>
+                  <h2 className="text-[10px] font-mono font-black text-black uppercase tracking-[0.2em]">Export Quality (DPI)</h2>
                   <div className="grid grid-cols-3 gap-2">
                     {[150, 300, 600].map((dpi) => (
                       <button
@@ -1432,7 +1553,7 @@ export default function App() {
             {/* Top Bar - Floating Actions */}
             <div className="absolute top-5 inset-x-5 flex items-center justify-between z-20 pointer-events-none">
               <div className="flex items-center gap-2 pointer-events-auto">
-                <input type="file" id="gdnt-upload" className="hidden" accept=".gdnt,.json" onChange={handleGdntUpload} />
+                <input type="file" id="gdnt-upload" className="hidden" accept=".json,.gdnt" onChange={handleGdntUpload} />
                 <input 
                   type="file" 
                   ref={bulkImportInputRef} 
@@ -1443,7 +1564,7 @@ export default function App() {
                 <label 
                   htmlFor="gdnt-upload"
                   className="p-2.5 bg-black/60 rounded-full text-white hover:scale-110 transition-transform cursor-pointer shadow-xl"
-                  title="Upload .gdnt file"
+                  title="Upload JSON file"
                 >
                   <Upload size={18} />
                 </label>
@@ -1465,11 +1586,155 @@ export default function App() {
               </button>
             </div>
 
-            <div className="h-full overflow-y-auto p-8 pt-24 pb-12">
+            {/* Filters Bar - Fixed below header */}
+            <div className="absolute top-16 inset-x-5 flex items-center justify-center gap-1 sm:gap-3 z-30">
+              {/* Type Filter */}
+              <div className="relative">
+                <button 
+                  onClick={() => setActiveFilterDropdown(activeFilterDropdown === 'type' ? null : 'type')}
+                  className={cn(
+                    "flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-black/60 backdrop-blur-md rounded-full text-[9px] sm:text-[10px] font-mono uppercase tracking-widest transition-all shadow-xl text-white border hover:bg-black/80",
+                    libraryFilters.type !== 'all' ? "border-white border-[3px]" : "border-white/10"
+                  )}
+                >
+                  <span className="font-black hidden xs:inline">Type</span>
+                  <span className="opacity-60">{libraryFilters.type}</span>
+                  <ChevronDown size={12} className={cn("transition-transform", activeFilterDropdown === 'type' && "rotate-180")} />
+                </button>
+                <AnimatePresence>
+                  {activeFilterDropdown === 'type' && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      className="absolute left-1/2 -translate-x-1/2 mt-2 w-40 bg-black/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/10 overflow-hidden z-50 p-2 space-y-1"
+                    >
+                      {['all', 'mesh', 'linear', 'radial', 'conic'].map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => {
+                            setLibraryFilters({ ...libraryFilters, type: t });
+                            setActiveFilterDropdown(null);
+                          }}
+                          className={cn(
+                            "w-full text-center px-4 py-2 rounded-xl text-[10px] font-mono font-black uppercase tracking-widest transition-colors",
+                            libraryFilters.type === t ? "bg-white text-black" : "hover:bg-white/10 text-white/60"
+                          )}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Ratio Filter */}
+              <div className="relative">
+                <button 
+                  onClick={() => setActiveFilterDropdown(activeFilterDropdown === 'ratio' ? null : 'ratio')}
+                  className={cn(
+                    "flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-black/60 backdrop-blur-md rounded-full text-[9px] sm:text-[10px] font-mono uppercase tracking-widest transition-all shadow-xl text-white border hover:bg-black/80",
+                    libraryFilters.ratio !== 'all' ? "border-white border-[3px]" : "border-white/10"
+                  )}
+                >
+                  <span className="font-black hidden xs:inline">Ratio</span>
+                  <span className="opacity-60">{libraryFilters.ratio}</span>
+                  <ChevronDown size={12} className={cn("transition-transform", activeFilterDropdown === 'ratio' && "rotate-180")} />
+                </button>
+                <AnimatePresence>
+                  {activeFilterDropdown === 'ratio' && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      className="absolute left-1/2 -translate-x-1/2 mt-2 w-40 bg-black/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/10 overflow-hidden z-50 p-2 space-y-1"
+                    >
+                      {libraryRatios.map((r) => (
+                        <button
+                          key={r}
+                          onClick={() => {
+                            setLibraryFilters({ ...libraryFilters, ratio: r });
+                            setActiveFilterDropdown(null);
+                          }}
+                          className={cn(
+                            "w-full text-center px-4 py-2 rounded-xl text-[10px] font-mono font-black uppercase tracking-widest transition-colors",
+                            libraryFilters.ratio === r ? "bg-white text-black" : "hover:bg-white/10 text-white/60"
+                          )}
+                        >
+                          {r}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Noise Filter */}
+              <div className="relative">
+                <button 
+                  onClick={() => setActiveFilterDropdown(activeFilterDropdown === 'noise' ? null : 'noise')}
+                  className={cn(
+                    "flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-black/60 backdrop-blur-md rounded-full text-[9px] sm:text-[10px] font-mono uppercase tracking-widest transition-all shadow-xl text-white border hover:bg-black/80",
+                    libraryFilters.noise !== 'all' ? "border-white border-[3px]" : "border-white/10"
+                  )}
+                >
+                  <span className="font-black hidden xs:inline">Noise</span>
+                  <span className="opacity-60">{libraryFilters.noise === 'noise' ? 'With' : libraryFilters.noise}</span>
+                  <ChevronDown size={12} className={cn("transition-transform", activeFilterDropdown === 'noise' && "rotate-180")} />
+                </button>
+                <AnimatePresence>
+                  {activeFilterDropdown === 'noise' && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      className="absolute left-1/2 -translate-x-1/2 mt-2 w-40 bg-black/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/10 overflow-hidden z-50 p-2 space-y-1"
+                    >
+                      {[
+                        { val: 'all', label: 'All' },
+                        { val: 'none', label: 'No Noise' },
+                        { val: 'noise', label: 'With Noise' }
+                      ].map((n) => (
+                        <button
+                          key={n.val}
+                          onClick={() => {
+                            setLibraryFilters({ ...libraryFilters, noise: n.val });
+                            setActiveFilterDropdown(null);
+                          }}
+                          className={cn(
+                            "w-full text-center px-4 py-2 rounded-xl text-[10px] font-mono font-black uppercase tracking-widest transition-colors",
+                            libraryFilters.noise === n.val ? "bg-white text-black" : "hover:bg-white/10 text-white/60"
+                          )}
+                        >
+                          {n.label}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Clear Filters */}
+              {(libraryFilters.type !== 'all' || libraryFilters.ratio !== 'all' || libraryFilters.noise !== 'all') && (
+                <button 
+                  onClick={clearFilters}
+                  className="p-2 px-2 sm:px-3 bg-red-500 text-white rounded-full transition-all active:scale-95 flex items-center gap-1 shadow-xl hover:bg-red-600"
+                  title="Clear Filters"
+                >
+                  <FilterX size={14} />
+                  <span className="text-[9px] font-mono font-black uppercase tracking-widest hidden xs:inline">Clear</span>
+                </button>
+              )}
+            </div>
+
+            <div className="h-full overflow-y-auto p-8 pt-32 pb-12">
+
               {savedGradients.length > 0 ? (
                 <>
-                  <div className="columns-2 sm:columns-3 md:columns-4 gap-8">
-                    {savedGradients.map((saved) => (
+                  {filteredGradients.length > 0 ? (
+                    <div className="columns-2 sm:columns-3 md:columns-4 gap-8">
+                      {filteredGradients.map((saved) => (
                       <div 
                         key={saved.id}
                         className="break-inside-avoid mb-8 group relative flex flex-col bg-white rounded-xl overflow-hidden border border-neutral-200 shadow-sm"
@@ -1544,6 +1809,18 @@ export default function App() {
                       </div>
                     ))}
                   </div>
+                  ) : (
+                    <div className="py-20 flex flex-col items-center justify-center text-neutral-300 border-2 border-dashed border-neutral-100 rounded-[40px]">
+                      <FilterX size={48} className="mb-4 opacity-20" />
+                      <p className="text-[10px] font-mono uppercase tracking-widest text-neutral-400">No gradients match these filters</p>
+                      <button 
+                        onClick={clearFilters}
+                        className="mt-6 text-[10px] font-mono font-black text-black uppercase tracking-widest hover:underline"
+                      >
+                        Reset All Filters
+                      </button>
+                    </div>
+                  )}
 
                   {/* Embedded Bulk Actions */}
                   <div className="mt-12 mb-8 flex flex-col items-center justify-center space-y-4 border-t border-neutral-100 pt-12">
@@ -1656,7 +1933,7 @@ export default function App() {
             >
               <div className="flex justify-between items-center mb-6">
                 <div>
-                  <h2 className="text-sm font-mono font-black text-neutral-900 tracking-[0.5em] uppercase">Export</h2>
+                  <h1 className="text-sm font-mono font-black text-neutral-900 uppercase tracking-[0.2em] leading-none whitespace-nowrap">Export</h1>
                 </div>
                 <button 
                   onClick={() => {
@@ -1714,7 +1991,7 @@ export default function App() {
                     {[
                       { id: 'png', icon: ImageIcon, label: 'PNG' },
                       { id: 'svg', icon: FileCode, label: 'SVG' },
-                      { id: 'json', icon: FileJson, label: 'GDNT' },
+                      { id: 'json', icon: FileJson, label: 'JSON' },
                     ].map((type) => (
                       <button
                         key={type.id}
@@ -1803,7 +2080,7 @@ export default function App() {
                   }}
                 >
                   <Download size={20} style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }} />
-                  {exportType === 'json' ? 'SAVE AS GDNT' : `Save as ${exportType.toUpperCase()}`}
+                  Save as {exportType.toUpperCase()}
                 </button>
               </div>
             </motion.div>

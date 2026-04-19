@@ -5,6 +5,7 @@
   --font-sans: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   --font-serif: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --breakpoint-xs: 400px;
 }
 
 @layer base {
